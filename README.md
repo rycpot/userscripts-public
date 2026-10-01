@@ -26,5 +26,5 @@ Updates are automatic: your userscript manager checks this repo and installs a n
   </a>
 </p>
 <p>
-  <img src="https://files.catbox.moe/usdlly.png" alt="Instagram Right-Click Images" width="600">
+  <img src="https://rycpot.x02.me/i/7u7pIO.png" alt="Instagram Right-Click Images" width="600">
 </p>
