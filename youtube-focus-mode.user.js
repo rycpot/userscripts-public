@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         YouTube Focus Mode + Full-Sized Theater Mode
 // @namespace    https://tampermonkey.net/
-// @version      2.2.1
+// @version      2.3.0
 // @description  Focus button that dims everything but the video, full-sized Theater mode by default, H.264 (MP4/AVC) instead of VP9/AV1, auto 1080p quality, a mini player when you scroll down to the comments, hidden related videos, a screenshot button and autoplay-next turned off.
 // @author       you
 // @icon         https://www.youtube.com/favicon.ico
@@ -111,6 +111,15 @@
     html[dark] #${BTN_ID}.active {
       background: #3ea6ff;
       color: #0f0f0f;
+    }
+    /* Focus mode locks page scrolling so the video can't move. The gutter
+       keeps the scrollbar's space so the layout doesn't shift sideways. */
+    html.yt-focus-scroll-lock {
+      overflow: hidden !important;
+      scrollbar-gutter: stable !important;
+    }
+    html.yt-focus-scroll-lock body {
+      overflow: hidden !important;
     }
     #${OVERLAY_ID} {
       position: fixed;
@@ -711,6 +720,7 @@
     btn.title = 'Dim page, click anywhere to exit';
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
+      btn.blur(); // so Space/arrow keys go to the player, not this button
       setFocusMode(!focusOn);
     });
     return btn;
@@ -810,6 +820,7 @@
         overlay.addEventListener('click', () => setFocusMode(false));
         document.body.appendChild(overlay);
       }
+      document.documentElement.classList.add('yt-focus-scroll-lock');
       updateOverlayClip();
       startClipLoop(); // keeps the hole aligned through theater-mode toggles, sidebar collapse, etc.
       document.addEventListener('keydown', escListener);
@@ -820,6 +831,7 @@
       }
       const overlay = document.getElementById(OVERLAY_ID);
       if (overlay) overlay.remove();
+      document.documentElement.classList.remove('yt-focus-scroll-lock');
       stopClipLoop();
       document.removeEventListener('keydown', escListener);
     }
