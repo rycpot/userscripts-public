@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         YouTube Comment Search
 // @namespace    https://tampermonkey.net/
-// @version      1.1.0
+// @version      1.1.1
 // @description  Search a video's comments by keyword from a panel opened with Cmd+S / Ctrl+S. Uses your own YouTube Data API key. Highlights matches, expands reply threads, makes timestamps clickable, and supports /regex/, :creator and global: (whole channel).
 // @author       you
 // @icon         https://www.youtube.com/favicon.ico
@@ -163,7 +163,10 @@
     if (/forbidden|API_KEY_HTTP_REFERRER_BLOCKED|ipRefererBlocked/i.test(r || ''))
       return 'Your API key is not allowed here. Check its restrictions in Google Cloud.';
     if (r === 'network') return 'Couldn\'t reach YouTube\'s API. Check your connection.';
-    return `Something went wrong: ${err && err.message || r}`;
+    if (/processingFailure|backendError|internalError/i.test(r || ''))
+      return 'YouTube\'s comment search failed for this video. Try again, or try different keywords.';
+    const msg = String((err && err.message) || r || '').replace(/<[^>]+>/g, '');
+    return `Something went wrong: ${msg}`;
   }
 
   function toComment(snippet, id) {
@@ -245,12 +248,35 @@
     return vd.loading;
   }
 
+  // YouTube's keyword search. order=relevance together with searchTerms
+  // fails ("processingFailure") on many videos, so ask for newest first
+  // (we rank the matches ourselves) and fall back once if even that fails.
+  // Up to 3 pages (300 threads, 1 quota unit each).
   async function searchApi(params) {
-    const res = await apiGet('commentThreads', {
-      part: 'snippet,replies', maxResults: 100, textFormat: 'plainText',
-      order: 'relevance', ...params,
-    });
-    return (res.items || []).map(toThread);
+    const out = [];
+    let pageToken;
+    let order = 'time';
+    for (let page = 0; page < 3; page++) {
+      let res;
+      try {
+        res = await apiGet('commentThreads', {
+          part: 'snippet,replies', maxResults: 100, textFormat: 'plainText',
+          order, ...params, ...(pageToken ? { pageToken } : {}),
+        });
+      } catch (err) {
+        if (page === 0 && order === 'time' && /processingFailure|backendError/i.test(err.reason || '')) {
+          order = 'relevance';
+          page--;
+          continue;
+        }
+        if (out.length) break; // keep what we already have
+        throw err;
+      }
+      for (const item of res.items || []) out.push(toThread(item));
+      pageToken = res.nextPageToken;
+      if (!pageToken) break;
+    }
+    return out;
   }
 
   async function loadReplies(parentId) {
