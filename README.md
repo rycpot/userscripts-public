@@ -46,6 +46,7 @@ Updates are automatic: your userscript manager checks this repo and installs a n
   </a>
 </p>
 
+
 <h2>YouTube Comment Search</h2>
 <p>Adds a search box to a video's comment section. Press <b>Cmd+S</b> (Mac) or <b>Ctrl+S</b> to jump to it. Results replace the comment list until you clear the search; matches are underlined, timestamps jump the video, and reply threads expand.</p>
 <ul>
@@ -60,4 +61,7 @@ Updates are automatic: your userscript manager checks this repo and installs a n
   <a href="https://raw.githubusercontent.com/rycpot/userscripts-public/main/youtube-comment-search.user.js">
     <img src="https://img.shields.io/badge/Install-Userscript-4CAF50?style=for-the-badge&logo=tampermonkey&logoColor=white" alt="Install YouTube Comment Search">
   </a>
+</p>
+<p>
+  <img src="https://imglink.cc/cdn/J1lEM1KJ2k.png" alt="Youtube+" width="600">
 </p>
