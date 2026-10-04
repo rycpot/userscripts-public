@@ -91,7 +91,7 @@ Updates are automatic: your userscript manager checks this repo and installs a n
 </p>
 
 <h2>Open in Goodreads</h2>
-<p>On Amazon book pages, adds a <b>View on goodreads</b> button under the product images that opens the same book on Goodreads (matched by ISBN/ASIN). Works on all Amazon country sites.</p>
+<p>On Amazon book pages, adds an <b>Open in goodreads</b> button under the product images that opens the same book on Goodreads (matched by ISBN/ASIN). Works on all Amazon country sites.</p>
 
 <p>
   <a href="https://raw.githubusercontent.com/rycpot/userscripts-public/main/open-in-goodreads.user.js">
