@@ -1,8 +1,9 @@
 // ==UserScript==
 // @name         Instagram - Right-click images (hardened)
 // @namespace    local.rightclick-instagram
-// @version      1.0.0
+// @version      1.0.1
 // @description  Enables right-click "Copy image" / "Save image as" on Instagram using structural detection (no class names), with a runtime fallback.
+// @icon         https://www.instagram.com/favicon.ico
 // @match        *://*.instagram.com/*
 // @run-at       document-start
 // @grant        GM_addStyle
