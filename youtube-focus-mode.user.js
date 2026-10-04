@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         YouTube Focus Mode + Full-Sized Theater Mode
 // @namespace    https://tampermonkey.net/
-// @version      2.3.1
+// @version      2.3.2
 // @description  Focus button that dims everything but the video, full-sized Theater mode by default, H.264 (MP4/AVC) instead of VP9/AV1, auto 1080p quality, a mini player when you scroll down to the comments, hidden related videos, a screenshot button and autoplay-next turned off.
 // @author       you
 // @icon         https://www.youtube.com/favicon.ico
@@ -33,7 +33,7 @@
     miniPlayerMargin: 15,       // gap from the window edges, in px
     hideRelated: true,
     screenshotButton: true,
-    screenshotIconColor: '#8a8a8a', // dim grey; YouTube's own icons are about '#eee'
+    screenshotIconColor: '#fff',
     disableAutoplay: true,      // turns off the "Autoplay next video" toggle
   };
 
@@ -267,6 +267,15 @@
       justify-content: center;
       vertical-align: top;
     }
+    /* Rounded highlight on hover, like YouTube's newer control buttons. */
+    #${SHOT_ID} {
+      border-radius: var(--yt-focus-shot-radius, 50%);
+      transition: background-color .1s;
+    }
+    #${SHOT_ID}:hover,
+    #${SHOT_ID}:focus-visible {
+      background-color: rgba(255, 255, 255, .2) !important;
+    }
     #${SHOT_ID} svg {
       display: block;
       flex: none;
@@ -443,6 +452,8 @@
     btn.style.padding = '0';
     btn.style.margin = cs.margin;
     btn.style.opacity = cs.opacity;
+    // Reuse the neighbour's corner rounding when it has one.
+    if (parseFloat(cs.borderTopLeftRadius) > 0) btn.style.setProperty('--yt-focus-shot-radius', cs.borderRadius);
 
     // The viewfinder is square: match the reference glyph's larger side.
     const size = Math.max(glyph.right - glyph.left, glyph.bottom - glyph.top);
