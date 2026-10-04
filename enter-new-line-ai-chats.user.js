@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Enter = New Line (Claude, ChatGPT, Gemini, DeepSeek)
 // @namespace    local.enter-newline
-// @version      1.2.0
+// @version      1.2.1
 // @description  Enter inserts a new line. Ctrl/Cmd+Enter sends. Runs only on Claude, ChatGPT, Gemini and DeepSeek.
 // @match        https://claude.ai/*
 // @match        https://chatgpt.com/*
@@ -11,6 +11,7 @@
 // @run-at       document-start
 // @grant        none
 // @noframes
+// @icon         data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCI+PHJlY3QgeD0iNCIgeT0iNCIgd2lkdGg9IjU2IiBoZWlnaHQ9IjU2IiByeD0iMTQiIGZpbGw9IiMyYjJkMzEiLz48cGF0aCBkPSJNNDQgMTh2MTZhNiA2IDAgMCAxLTYgNkgyMiIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjZmZmIiBzdHJva2Utd2lkdGg9IjYiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIvPjxwYXRoIGQ9Ik0yOSAzMWwtOSA5IDkgOSIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjZmZmIiBzdHJva2Utd2lkdGg9IjYiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIvPjwvc3ZnPg==
 // @downloadURL  https://raw.githubusercontent.com/rycpot/userscripts-public/main/enter-new-line-ai-chats.user.js
 // @updateURL    https://raw.githubusercontent.com/rycpot/userscripts-public/main/enter-new-line-ai-chats.user.js
 // ==/UserScript==
