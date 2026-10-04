@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         YouTube Comment Search
 // @namespace    https://tampermonkey.net/
-// @version      2.2.0
+// @version      2.2.1
 // @description  Adds a search box to a video's comment section (Cmd+S / Ctrl+S jumps to it). Uses your own YouTube Data API key. Highlights matches, expands reply threads, makes timestamps clickable, and supports /regex/, :creator and global: (whole channel).
 // @author       you
 // @icon         https://www.youtube.com/favicon.ico
@@ -496,14 +496,6 @@
     ytd-comments.ytcs-active #sections > #continuations { display: none !important; }
     ytd-comments.ytcs-inline:not(.ytcs-show-simplebox) ytd-comments-header-renderer #simple-box { display: none !important; }
     ytd-comments.ytcs-inline:not(.ytcs-show-simplebox) ytd-comments-header-renderer { margin-bottom: 12px !important; }
-    .ytcs-compose {
-      display: inline-flex; align-items: center; gap: 8px; height: 36px; margin-left: 16px; padding: 0 12px 0 8px;
-      border: 0; border-radius: 18px; background: transparent; cursor: pointer;
-      color: var(--yt-spec-text-primary, #0f0f0f); font: 500 14px/20px "Roboto", "Arial", sans-serif;
-      vertical-align: middle; flex: none;
-    }
-    .ytcs-compose:hover { background: var(--yt-spec-10-percent-layer, rgba(0,0,0,.1)); }
-    .ytcs-compose svg { width: 24px; height: 24px; fill: currentColor; display: block; }
   `;
 
   const CSS = `
@@ -561,6 +553,12 @@
     }
     .hint .chip:hover { background: var(--hover); border-color: var(--blue); color: var(--blue); }
     .hint .chip:active { transform: translateY(1px); }
+    .compose {
+      flex: none; display: inline-flex; align-items: center; gap: 4px; height: 30px; padding: 0 10px 0 8px;
+      border-radius: 15px; font-size: 13px; font-weight: 500; color: var(--fg2);
+    }
+    .compose:hover { background: var(--hover); color: var(--fg); }
+    .compose svg { width: 18px; height: 18px; }
 
     /* Status line + messages */
     .status { display: flex; align-items: center; gap: 12px; margin: 16px 0 8px; color: var(--fg2); }
@@ -680,11 +678,9 @@
       chip('/regex/', 'Click to start a regular-expression search', fill('//', 1)),
       chip('global: words', 'Click to search the whole channel', fill('global: ', 8)),
       chip('API key', 'Click to change your YouTube API key', () => { ui.input.value = ''; showAuth(true); }));
-    // "Add a comment" is folded away while the search box sits in its spot;
-    // this button next to "Sort by" shows or hides it.
-    ui.compose = h('button', { class: 'ytcs-compose', type: 'button', onclick: toggleCompose },
-      svgIcon(ICON_PENCIL), h('span'));
-    updateCompose();
+    // "Add a comment" is folded away while the search box sits in its spot.
+    ui.compose = h('button', { class: 'compose', title: 'Add a comment', hidden: true, onclick: openCompose },
+      svgIcon(ICON_PENCIL), h('span', { text: 'Comment' }));
     ui.status = h('div', { class: 'status', hidden: true });
     ui.auth = h('div', { hidden: true });
     ui.results = h('div', { class: 'results' });
@@ -694,7 +690,7 @@
     }, { rootMargin: '800px 0px' }).observe(ui.sentinel);
 
     shadow.append(
-      h('div', { class: 'bar' }, h('span', { class: 'icon' }, svgIcon(ICON_SEARCH)), ui.input, ui.count, ui.clear, ui.progress),
+      h('div', { class: 'bar' }, h('span', { class: 'icon' }, svgIcon(ICON_SEARCH)), ui.input, ui.count, ui.clear, ui.compose, ui.progress),
       ui.hint, ui.auth, ui.status, ui.results, ui.sentinel,
     );
     syncTheme();
@@ -723,43 +719,18 @@
     const inline = !!simple;
     ui.host.toggleAttribute('inline', inline);
     comments.classList.toggle('ytcs-inline', inline);
-    // Compose button to the right of "Sort by".
-    const sort = inline && header.querySelector('ytd-comments-header-renderer #sort-menu');
-    const titleRow = inline && header.querySelector('ytd-comments-header-renderer #title');
-    if (sort && sort.parentElement) {
-      if (ui.compose.previousElementSibling !== sort) sort.after(ui.compose);
-    } else if (titleRow) {
-      if (ui.compose.parentElement !== titleRow) titleRow.append(ui.compose);
-    } else if (ui.compose.isConnected) {
-      ui.compose.remove();
-    }
-    updateCompose();
+    ui.compose.hidden = !inline || comments.classList.contains('ytcs-show-simplebox');
     return true;
   }
 
-  function composeOpen() {
-    const c = commentsEl();
-    return !!(c && c.classList.contains('ytcs-show-simplebox'));
-  }
-
-  function updateCompose() {
-    if (!ui.compose) return;
-    const open = composeOpen();
-    ui.compose.lastChild.textContent = open ? 'Hide comment box' : 'Add comment';
-    ui.compose.title = open ? 'Fold the "Add a comment" box away' : 'Show the "Add a comment" box';
-  }
-
-  function toggleCompose() {
+  function openCompose() {
     const comments = commentsEl();
     if (!comments) return;
-    const open = !composeOpen();
-    comments.classList.toggle('ytcs-show-simplebox', open);
-    updateCompose();
-    if (open) {
-      const simple = comments.querySelector('ytd-comments-header-renderer #simple-box');
-      const placeholder = simple && simple.querySelector('#placeholder-area, #simplebox-placeholder');
-      if (placeholder) placeholder.click();
-    }
+    comments.classList.add('ytcs-show-simplebox');
+    ui.compose.hidden = true;
+    const simple = comments.querySelector('ytd-comments-header-renderer #simple-box');
+    const placeholder = simple && simple.querySelector('#placeholder-area, #simplebox-placeholder');
+    if (placeholder) placeholder.click();
   }
 
   let placeScheduled = false;
@@ -1201,7 +1172,7 @@
     const id = videoId();
     const c = commentsEl();
     if (c) c.classList.remove('ytcs-show-simplebox');
-    updateCompose();
+    if (ui.compose) ui.compose.hidden = !(ui.host && ui.host.hasAttribute('inline'));
     if (current && current.vd.id !== id) {
       current = null;
       if (ui.host) { clearSearch(); hideAuth(); updateCount(null); }
@@ -1211,7 +1182,7 @@
 
   const startObserver = () => {
     new MutationObserver(() => {
-      if (videoId() && (!ui.host || !ui.host.isConnected || (ui.host.hasAttribute('inline') && !ui.compose.isConnected))) schedulePlace();
+      if (videoId() && (!ui.host || !ui.host.isConnected)) schedulePlace();
     })
       .observe(document.documentElement, { childList: true, subtree: true });
     schedulePlace();
