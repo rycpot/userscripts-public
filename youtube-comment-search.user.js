@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         YouTube Comment Search
 // @namespace    https://tampermonkey.net/
-// @version      1.2.0
-// @description  Search a video's comments by keyword from a panel opened with Cmd+S / Ctrl+S. Uses your own YouTube Data API key. Highlights matches, expands reply threads, makes timestamps clickable, and supports /regex/, :creator and global: (whole channel).
+// @version      2.0.0
+// @description  Adds a search box to a video's comment section (Cmd+S / Ctrl+S jumps to it). Uses your own YouTube Data API key. Highlights matches, expands reply threads, makes timestamps clickable, and supports /regex/, :creator and global: (whole channel).
 // @author       you
 // @icon         https://www.youtube.com/favicon.ico
 // @match        https://www.youtube.com/*
@@ -36,7 +36,6 @@
 
   const API = 'https://www.googleapis.com/youtube/v3';
   const KEY_STORE = 'ytcsApiKey';
-  const GEOMETRY_STORE = 'ytcsGeometry';
 
   // ------------------------------------------------------------------
   // Small helpers
@@ -388,272 +387,245 @@
   }
 
   // ------------------------------------------------------------------
-  // Styles
+  // Styles. The search bar and results live in a shadow root inside
+  // YouTube's comment section; YouTube's theme variables (--yt-spec-*)
+  // inherit into it, so it matches light and dark mode automatically.
   // ------------------------------------------------------------------
+  const PAGE_CSS = `
+    ytd-comments.ytcs-active #sections > #contents,
+    ytd-comments.ytcs-active #sections > #continuations { display: none !important; }
+  `;
+
   const CSS = `
-    :host { all: initial; }
-    .root {
-      --bg: #1c1c1c; --header: #222; --chip: #2b2b2b; --chip-hover: #383838; --line: #3d3d3d;
-      --text: #d6d6d6; --muted: #888; --strong: #fff; --placeholder: rgba(255,255,255,.35);
-      --link: #609fff; --mark: orange; --mark-style: dotted; --accent: #ddd; --accent-text: #222;
-      --count-border: orange; --error: #f28b82; --progress: #7f7f7f;
-      position: fixed; bottom: 0; z-index: 2147483646;
-      display: flex; flex-direction: column;
-      background: var(--bg); color: var(--text);
-      border-radius: 8px 8px 0 0;
-      box-shadow: 0 16px 24px 2px rgba(0,0,0,.14), 0 6px 30px 5px rgba(0,0,0,.12), 0 8px 10px -5px rgba(0,0,0,.4);
-      font: 400 14px/20px Roboto, Arial, sans-serif;
-      -webkit-font-smoothing: antialiased;
-      overflow: visible; cursor: default; user-select: none;
+    :host {
+      display: block; margin: 0 0 24px;
+      --fg: var(--yt-spec-text-primary, #0f0f0f);
+      --fg2: var(--yt-spec-text-secondary, #606060);
+      --line: var(--yt-spec-10-percent-layer, rgba(0,0,0,.1));
+      --chip: var(--yt-spec-badge-chip-background, rgba(0,0,0,.05));
+      --hover: var(--yt-spec-10-percent-layer, rgba(0,0,0,.1));
+      --blue: var(--yt-spec-call-to-action, #065fd4);
+      --inverse: var(--yt-spec-text-primary-inverse, #fff);
+      --error: #cc0000;
+      --mark: #e1251b; --mark-style: solid;
+      color: var(--fg);
+      font: 400 14px/20px "Roboto", "Arial", sans-serif;
     }
-    .root.light {
-      --bg: #fafafa; --header: #e3e3e3; --chip: #d0d0d0; --chip-hover: #c4c4c4; --line: #cacaca;
-      --text: #111; --muted: #606060; --strong: #222; --placeholder: rgba(0,0,0,.35);
-      --link: #065fd4; --mark: #e1251b; --mark-style: solid; --accent: #3b7bbf; --accent-text: #fff;
-      --count-border: #065fd4; --error: #d93025; --progress: #3b7bbf;
-    }
-    [hidden] { display: none !important; }
+    :host([dark]) { --error: #ff6b6b; --mark: orange; --mark-style: dotted; }
     * { box-sizing: border-box; }
+    [hidden] { display: none !important; }
     button, input { font: inherit; color: inherit; background: none; border: 0; margin: 0; padding: 0; outline: none; }
-    button { cursor: pointer; display: flex; align-items: center; justify-content: center; }
+    button { cursor: pointer; }
     a { color: inherit; text-decoration: none; cursor: pointer; }
-    svg { width: 100%; height: 100%; fill: currentColor; }
-    code { background: var(--chip); border-radius: 3px; padding: 1px 5px; margin: 0 2px; letter-spacing: .5px; font-family: inherit; }
+    svg { display: block; width: 100%; height: 100%; fill: currentColor; }
+    code { background: var(--chip); border-radius: 4px; padding: 1px 5px; font-family: inherit; font-size: 13px; }
 
-    /* resize / move handles */
-    .bar { position: absolute; z-index: 5; }
-    .bar.n { top: -4px; left: 0; width: 100%; height: 8px; cursor: ns-resize; }
-    .bar.e { right: -4px; top: 0; width: 8px; height: 100%; cursor: ew-resize; }
-    .bar.w { left: -4px; top: 0; width: 8px; height: 100%; cursor: ew-resize; }
-    .bar.ne { right: -6px; top: -6px; width: 14px; height: 14px; cursor: nesw-resize; z-index: 6; }
-    .bar.nw { left: -6px; top: -6px; width: 14px; height: 14px; cursor: nwse-resize; z-index: 6; }
-    .bar.move { top: 0; left: 0; width: calc(100% - 48px); height: 14px; cursor: move; }
+    /* Search bar */
+    .bar {
+      position: relative; display: flex; align-items: center; gap: 8px;
+      height: 40px; padding: 0 6px 0 14px;
+      border: 1px solid var(--line); border-radius: 20px;
+      transition: border-color .15s, box-shadow .15s;
+    }
+    .bar:focus-within { border-color: var(--blue); box-shadow: inset 0 0 0 1px var(--blue); }
+    .bar .icon { width: 20px; height: 20px; flex: none; color: var(--fg2); }
+    .bar input { flex: 1; min-width: 0; height: 100%; font-size: 14px; color: var(--fg); }
+    .bar input::placeholder { color: var(--fg2); }
+    .count { flex: none; font-size: 12px; color: var(--fg2); white-space: nowrap; }
+    .count.ready::before { content: "\\25CF  "; color: var(--blue); }
+    .clear { flex: none; width: 30px; height: 30px; padding: 6px; border-radius: 50%; color: var(--fg2); }
+    .clear:hover { background: var(--hover); color: var(--fg); }
+    .progress { position: absolute; left: 20px; right: 20px; bottom: -1px; height: 2px; overflow: hidden; border-radius: 1px; }
+    .progress > div { height: 100%; width: 0; background: var(--blue); }
+    .progress.busy > div { width: 30%; animation: slide 1s infinite ease-in-out; }
+    .progress.determinate > div { animation: none; transition: width .2s; }
+    @keyframes slide { from { transform: translateX(-100%); } to { transform: translateX(340%); } }
+    .hint { margin: 6px 14px 0; font-size: 12px; color: var(--fg2); }
+    .hint code { font-size: 12px; padding: 0 4px; }
 
-    header {
-      position: relative; display: flex; align-items: center; flex: none;
-      height: 56px; padding-right: 48px;
-      background: var(--header); border-radius: 8px 8px 0 0;
-    }
-    header input { flex: 1; height: 100%; padding: 0 12px 0 20px; font-size: 16px; user-select: text; cursor: text; }
-    header input::placeholder { color: var(--placeholder); font-size: 15px; }
-    header input:focus::placeholder { opacity: 0; }
-    .count {
-      flex: none; min-width: 3ch; height: 22px; padding: 2px 6px 0; margin-right: 4px; text-align: center; line-height: 18px;
-      background: var(--chip); color: var(--strong); font-size: 12px; white-space: nowrap;
-      border-radius: 4px 4px 0 0; border-bottom: 2px solid transparent; opacity: .75;
-      transition: opacity .2s, border-color .2s;
-    }
-    .count.ready { border-bottom-color: var(--count-border); opacity: 1; }
-    .close { position: absolute; top: 12px; right: 10px; width: 32px; height: 32px; padding: 6px; border-radius: 50%; opacity: .6; z-index: 7; }
-    .close:hover { opacity: 1; background: var(--chip); }
-    .progress { position: absolute; left: 0; bottom: 0; height: 1px; width: 0; background: var(--progress); }
-    .progress.busy { height: 2px; width: 30%; animation: slide 1s infinite ease-in-out; }
-    .progress.determinate { height: 2px; animation: none; transition: width .2s; }
-    @keyframes slide { from { left: -30%; } to { left: 100%; } }
+    /* Status line + messages */
+    .status { display: flex; align-items: center; gap: 12px; margin: 16px 0 8px; color: var(--fg2); }
+    .status.error { color: var(--error); }
+    .status .show-all { color: var(--blue); font-weight: 500; }
+    .status .show-all:hover { text-decoration: underline; }
 
-    .body { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; }
-    .scroll { flex: 1; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
-    .message { padding: 24px 28px; text-align: center; color: var(--text); user-select: text; }
-    .message.error { color: var(--error); }
-    .guide { padding: 18px 28px 24px; user-select: text; }
-    .guide h1 { font-size: 18px; font-weight: 500; margin: 0 0 10px; color: var(--strong); }
-    .guide p { margin: 12px 0 6px; }
-    .guide ul { margin: 0; padding-left: 4px; list-style: none; }
-    .guide li { margin: 4px 0; }
-    .guide li::before { content: "\\2022"; font-weight: bold; padding-right: 10px; }
-    .guide a { color: var(--link); }
-    .guide a:hover { text-decoration: underline; }
-
-    .thread { padding: 6px 0; }
-    .thread + .thread { border-top: 1px solid color-mix(in srgb, var(--line) 45%, transparent); }
-    .comment {
-      position: relative; display: grid; grid-template-columns: auto 1fr;
-      padding: 10px 40px 10px 18px; user-select: text;
-    }
-    .comment.reply { padding-left: 74px; }
-    .comment.reply::before { content: ""; position: absolute; left: 37px; top: 0; bottom: 0; width: 2px; background: var(--chip); }
-    .side { grid-row: 1 / span 3; position: relative; width: 40px; height: 40px; margin-right: 16px; }
-    .reply .side { width: 24px; height: 24px; }
-    .avatar { display: block; width: 100%; height: 100%; border-radius: 50%; background: var(--chip) center / cover no-repeat; }
-    .replies-btn {
-      position: absolute; left: 50%; bottom: -26px; transform: translateX(-50%);
-      min-width: 24px; height: 17px; padding: 0 4px; border-radius: 3px;
-      background: var(--chip); font-size: 11px; line-height: 17px;
-    }
-    .replies-btn:hover { background: var(--chip-hover); }
-    .author { display: flex; align-items: center; gap: 6px; height: 20px; margin-bottom: 2px; font-size: 13px; line-height: 18px; min-width: 0; }
-    .author .name { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--strong); }
-    .author .badge { width: 13px; height: 13px; flex: none; color: var(--muted); }
-    .author .date, .author .likes { flex: none; color: var(--muted); }
-    .author .date:hover { color: var(--text); }
-    .author .likes { display: inline-flex; align-items: center; gap: 3px; }
-    .author .likes svg { width: 13px; height: 13px; }
-    .text {
-      white-space: pre-line; word-break: break-word;
-      display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 4; overflow: hidden;
-    }
-    .reply .text { -webkit-line-clamp: 3; }
+    /* Results, styled like YouTube's own comments */
+    .thread { margin-top: 16px; }
+    .comment { display: grid; grid-template-columns: 40px 1fr; column-gap: 16px; }
+    .reply-list { margin-left: 56px; }
+    .reply-list .comment { grid-template-columns: 24px 1fr; column-gap: 12px; margin-top: 12px; }
+    .avatar { display: block; width: 40px; height: 40px; border-radius: 50%; background: var(--chip) center / cover no-repeat; }
+    .reply-list .avatar { width: 24px; height: 24px; }
+    .head { display: flex; align-items: baseline; gap: 4px; flex-wrap: wrap; margin-bottom: 2px; }
+    .name { font-size: 13px; font-weight: 500; line-height: 18px; color: var(--fg); }
+    .name.creator { background: var(--chip); border-radius: 12px; padding: 1px 6px; }
+    .badge { display: inline-block; width: 12px; height: 12px; margin-left: 2px; vertical-align: -1px; color: var(--fg2); }
+    .date { font-size: 12px; line-height: 18px; color: var(--fg2); }
+    .date:hover { color: var(--fg); }
+    .text { white-space: pre-wrap; word-break: break-word; user-select: text;
+      display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 4; overflow: hidden; }
     .text.open { -webkit-line-clamp: unset; display: block; }
-    .text a { color: var(--link); }
-    .text a:hover { text-decoration: underline; }
-    .text mark {
-      background: transparent; color: inherit;
-      border-bottom: 1px var(--mark-style) var(--mark);
+    .text a { color: var(--blue); }
+    .text mark { background: transparent; color: inherit; border-bottom: 1px var(--mark-style) var(--mark); }
+    .more { margin-top: 4px; font-size: 14px; font-weight: 500; color: var(--fg2); }
+    .more:hover { color: var(--fg); }
+    .tools { display: flex; align-items: center; gap: 8px; margin-top: 4px; font-size: 12px; color: var(--fg2); }
+    .likes { display: inline-flex; align-items: center; gap: 6px; }
+    .likes svg { width: 16px; height: 16px; }
+    .other-video a { color: var(--blue); }
+    .replies-btn {
+      display: inline-flex; align-items: center; gap: 6px; height: 36px; margin: 4px 0 0 -12px; padding: 0 12px;
+      border-radius: 18px; color: var(--blue); font-weight: 500;
     }
-    .more { justify-self: start; margin-top: 2px; font-size: 12px; color: var(--muted); }
-    .more:hover { color: var(--text); }
-    .other-video { font-size: 12px; color: var(--muted); margin-top: 2px; }
-    .other-video a { color: var(--link); }
+    .replies-btn:hover { background: color-mix(in srgb, var(--blue) 12%, transparent); }
+    .replies-btn .chev { width: 20px; height: 20px; transition: transform .15s; }
+    .replies-btn.open .chev { transform: rotate(180deg); }
+    .sentinel { height: 1px; }
 
-    /* API key screen */
-    .auth { position: absolute; inset: 0; z-index: 4; display: flex; flex-direction: column; align-items: center; text-align: center; padding: 34px 28px 20px; background: var(--bg); border-radius: 8px 8px 0 0; overflow-y: auto; user-select: text; }
-    .auth h1 { font-size: 22px; font-weight: 500; margin: 0 0 6px; color: var(--strong); }
-    .auth p { margin: 4px 0; color: var(--muted); }
-    .auth input { width: min(360px, 100%); margin-top: 18px; padding: 6px 4px; font-size: 15px; text-align: center; border-bottom: 1px solid var(--line); cursor: text; }
-    .auth input:focus { border-bottom-color: var(--accent); }
-    .auth .status { min-height: 20px; margin-top: 6px; font-size: 13px; color: var(--error); }
-    .auth .status.ok { color: var(--muted); }
-    .auth .row { display: flex; gap: 10px; margin-top: 10px; }
-    .auth button { height: 34px; padding: 0 18px; border-radius: 17px; font-weight: 500; background: var(--accent); color: var(--accent-text); }
-    .auth button.secondary { background: var(--chip); color: var(--text); }
-    .auth ol { text-align: left; margin: 18px 0 0; padding-left: 20px; color: var(--muted); font-size: 13px; }
-    .auth ol a { color: var(--link); }
+    /* API key card */
+    .auth { margin-top: 12px; padding: 20px 24px; border-radius: 12px; background: var(--chip); }
+    .auth h2 { margin: 0 0 4px; font-size: 16px; font-weight: 500; }
+    .auth p { margin: 2px 0; color: var(--fg2); }
+    .auth .row { display: flex; gap: 8px; align-items: center; margin-top: 12px; flex-wrap: wrap; }
+    .auth input { flex: 1; min-width: 220px; height: 36px; padding: 0 12px; border: 1px solid var(--line); border-radius: 8px; color: var(--fg); }
+    .auth input:focus { border-color: var(--blue); }
+    .auth button { height: 36px; padding: 0 16px; border-radius: 18px; font-weight: 500; }
+    .auth .primary { background: var(--blue); color: var(--inverse); }
+    .auth .secondary { background: var(--hover); }
+    .auth .msg { min-height: 20px; margin-top: 6px; font-size: 13px; color: var(--error); }
+    .auth .msg.ok { color: var(--fg2); }
+    .auth ol { margin: 10px 0 0; padding-left: 20px; color: var(--fg2); font-size: 13px; }
+    .auth ol a { color: var(--blue); }
     .auth ol a:hover { text-decoration: underline; }
   `;
 
+  const ICON_SEARCH = 'M20.87 20.17l-5.59-5.59C16.35 13.35 17 11.75 17 10c0-3.87-3.13-7-7-7s-7 3.13-7 7 3.13 7 7 7c1.75 0 3.35-.65 4.58-1.71l5.59 5.59.7-.71zM10 16c-3.31 0-6-2.69-6-6s2.69-6 6-6 6 2.69 6 6-2.69 6-6 6z';
+  const ICON_CHEVRON = 'M12 15.7 5.6 9.4l.8-.8 5.6 5.6 5.6-5.6.8.8z';
+
   // ------------------------------------------------------------------
-  // Panel
+  // Search bar inside the comment section
   // ------------------------------------------------------------------
   const ui = {};
-  let current = null;         // { vd, q, results, rendered }
+  let current = null;         // { vd, details, q, results, rendered }
   let requestSeq = 0;
 
-  function geometry() {
-    const g = GM_getValue(GEOMETRY_STORE, null) || {};
-    const w = Math.min(Math.max(g.w || 500, 360), innerWidth);
-    const hgt = Math.min(Math.max(g.h || Math.round(innerHeight * 0.6), 200), innerHeight - 20);
-    const x = Math.min(Math.max(g.x != null ? g.x : innerWidth - w - 24, 0), Math.max(0, innerWidth - w));
-    return { x, w, h: hgt };
+  function commentsEl() {
+    return document.querySelector('ytd-watch-flexy ytd-comments#comments, ytd-comments#comments');
   }
 
-  function applyGeometry(g) {
-    Object.assign(ui.root.style, { left: g.x + 'px', width: g.w + 'px', height: g.h + 'px' });
-  }
-
-  function saveGeometry() {
-    const r = ui.root.getBoundingClientRect();
-    GM_setValue(GEOMETRY_STORE, { x: Math.round(r.left), w: Math.round(r.width), h: Math.round(r.height) });
-  }
-
-  function makeBar(kind) {
-    const bar = h('div', { class: 'bar ' + kind });
-    bar.addEventListener('pointerdown', (e) => {
-      if (e.button !== 0) return;
-      e.preventDefault();
-      bar.setPointerCapture(e.pointerId);
-      const start = { x: e.clientX, y: e.clientY, ...geometryNow() };
-      const move = (ev) => {
-        const dx = ev.clientX - start.x;
-        const dy = ev.clientY - start.y;
-        let { x, w, h: hh } = start;
-        if (kind === 'move') x += dx;
-        if (kind.includes('n')) hh = start.h - dy;
-        if (kind === 'e' || kind === 'ne') w = start.w + dx;
-        if (kind === 'w' || kind === 'nw') { w = start.w - dx; x = start.x0 + dx; }
-        w = Math.min(Math.max(w, 360), innerWidth);
-        hh = Math.min(Math.max(hh, 200), innerHeight - 10);
-        if (kind === 'w' || kind === 'nw') x = Math.min(x, start.x0 + start.w - w);
-        x = Math.min(Math.max(x, 0), innerWidth - w);
-        applyGeometry({ x, w, h: hh });
-      };
-      const up = () => {
-        bar.removeEventListener('pointermove', move);
-        bar.removeEventListener('pointerup', up);
-        bar.removeEventListener('pointercancel', up);
-        saveGeometry();
-      };
-      bar.addEventListener('pointermove', move);
-      bar.addEventListener('pointerup', up);
-      bar.addEventListener('pointercancel', up);
-    });
-    return bar;
-  }
-
-  function geometryNow() {
-    const r = ui.root.getBoundingClientRect();
-    return { x0: r.left, x: r.left, w: r.width, h: r.height };
-  }
-
-  function buildPanel() {
+  function buildHost() {
     if (ui.host) return;
-    ui.host = h('ytcs-panel');
+    if (!document.getElementById('ytcs-page-css')) {
+      (document.head || document.documentElement).append(h('style', { id: 'ytcs-page-css', text: PAGE_CSS }));
+    }
+    ui.host = h('ytcs-search');
     const shadow = ui.host.attachShadow({ mode: 'open' });
     shadow.append(h('style', { text: CSS }));
 
     ui.input = h('input', {
-      type: 'text', placeholder: 'type keywords here..', spellcheck: 'false', autocomplete: 'off',
+      type: 'text', placeholder: 'Search comments', spellcheck: 'false', autocomplete: 'off',
+      'aria-label': 'Search comments',
     });
     ui.input.ytcsKeydown = (e) => {
       if (e.key === 'Enter') { e.preventDefault(); runQuery(ui.input.value); }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        if (ui.input.value || isActive()) clearSearch(); else ui.input.blur();
+      }
     };
-    ui.count = h('div', { class: 'count', title: 'Comments on this video', text: '…' });
-    ui.progress = h('div', { class: 'progress' });
-    ui.scroll = h('div', { class: 'scroll' });
-    ui.scroll.addEventListener('scroll', () => {
-      if (ui.scroll.scrollTop + ui.scroll.clientHeight > ui.scroll.scrollHeight - 300) renderMore();
-    }, { passive: true });
+    ui.input.addEventListener('focus', () => { ui.hint.hidden = false; prepare(); });
+    ui.input.addEventListener('blur', () => { ui.hint.hidden = true; });
 
-    ui.root = h('div', { class: 'root', hidden: true },
-      ['n', 'e', 'w', 'ne', 'nw', 'move'].map(makeBar),
-      h('button', { class: 'close', title: 'Close (Esc)', onclick: () => togglePanel(false) }, svgIcon(ICON_X)),
-      h('header', null, ui.input, ui.count, ui.progress),
-      h('div', { class: 'body' }, ui.scroll),
+    ui.count = h('span', { class: 'count' });
+    ui.clear = h('button', { class: 'clear', title: 'Clear search', hidden: true, onclick: () => { clearSearch(); ui.input.focus(); } }, svgIcon(ICON_X));
+    ui.input.addEventListener('input', () => { ui.clear.hidden = !ui.input.value && !isActive(); });
+    ui.progress = h('div', { class: 'progress' }, h('div'));
+    const code = (s) => h('code', { text: s });
+    ui.hint = h('div', { class: 'hint', hidden: true },
+      'Press Enter to search. Also ', code('/regex/'), ', ', code(':creator'), ', ', code('global: words'),
+      ' (whole channel), ', code('/key'), ' to change API key.');
+    ui.status = h('div', { class: 'status', hidden: true });
+    ui.auth = h('div', { hidden: true });
+    ui.results = h('div', { class: 'results' });
+    ui.sentinel = h('div', { class: 'sentinel' });
+    new IntersectionObserver((entries) => {
+      if (entries.some((e) => e.isIntersecting)) renderMore();
+    }, { rootMargin: '800px 0px' }).observe(ui.sentinel);
+
+    shadow.append(
+      h('div', { class: 'bar' }, h('span', { class: 'icon' }, svgIcon(ICON_SEARCH)), ui.input, ui.count, ui.clear, ui.progress),
+      ui.hint, ui.auth, ui.status, ui.results, ui.sentinel,
     );
-    shadow.append(ui.root);
-    (document.body || document.documentElement).append(ui.host);
-    applyGeometry(geometry());
+    syncTheme();
     new MutationObserver(syncTheme).observe(document.documentElement, { attributes: true, attributeFilter: ['dark'] });
   }
 
   function syncTheme() {
-    if (!ui.root) return;
-    ui.root.classList.toggle('light', !document.documentElement.hasAttribute('dark'));
+    if (ui.host) ui.host.toggleAttribute('dark', document.documentElement.hasAttribute('dark'));
+  }
+
+  // Keep the bar just below YouTube's comments header ("N Comments · Sort
+  // by" and "Add a comment"). YouTube re-renders this area, so re-check.
+  function placeHost() {
+    if (!videoId()) return false;
+    const comments = commentsEl();
+    const header = comments && comments.querySelector('#sections > #header');
+    if (!header || !header.parentElement) return false;
+    buildHost();
+    if (ui.host.previousElementSibling !== header) header.after(ui.host);
+    return true;
+  }
+
+  let placeScheduled = false;
+  function schedulePlace() {
+    if (placeScheduled) return;
+    placeScheduled = true;
+    requestAnimationFrame(() => { placeScheduled = false; placeHost(); });
+  }
+
+  function isActive() {
+    const c = commentsEl();
+    return !!(c && c.classList.contains('ytcs-active'));
+  }
+
+  function setActive(on) {
+    const c = commentsEl();
+    if (c) c.classList.toggle('ytcs-active', on);
+    if (ui.clear) ui.clear.hidden = !on && !(ui.input && ui.input.value);
+  }
+
+  function clearSearch() {
+    requestSeq++;
+    setBusy(false);
+    ui.input.value = '';
+    ui.status.hidden = true;
+    ui.results.replaceChildren();
+    if (current) { current.results = null; current.rendered = 0; }
+    setActive(false);
   }
 
   function setBusy(on, fraction) {
+    if (!ui.progress) return;
     ui.progress.classList.toggle('busy', on && fraction == null);
     ui.progress.classList.toggle('determinate', on && fraction != null);
-    ui.progress.style.width = on && fraction != null ? (Math.max(2, fraction * 100)) + '%' : '';
-    if (!on) ui.progress.style.width = '0';
+    ui.progress.firstChild.style.width = on && fraction != null ? Math.max(2, fraction * 100) + '%' : '';
+  }
+
+  function showStatus(content, isError, withShowAll) {
+    ui.status.className = 'status' + (isError ? ' error' : '');
+    ui.status.replaceChildren(h('span', null, content),
+      withShowAll ? h('a', { class: 'show-all', text: 'Show all comments', onclick: clearSearch }) : null);
+    ui.status.hidden = false;
   }
 
   function showMessage(text, isError) {
-    ui.scroll.replaceChildren(h('div', { class: 'message' + (isError ? ' error' : '') }, text));
-    ui.scroll.scrollTop = 0;
+    ui.results.replaceChildren();
+    if (current) current.results = null;
+    showStatus(text, isError, true);
+    setActive(true);
   }
 
-  function showGuide() {
-    const code = (s) => h('code', { text: s });
-    const li = (...c) => h('li', null, ...c);
-    ui.scroll.replaceChildren(h('div', { class: 'guide' },
-      h('h1', { text: 'Quick Guide' }),
-      h('ul', null,
-        li('Type keywords and press ', code('Enter'), '. Matches are underlined.'),
-        li('Type ', code('/regex/'), ' to search with a regular expression.'),
-        li('Type ', code(':creator'), ' for comments by the uploader.'),
-        li('Use ', code('global: xyz'), ' to search all of the channel\'s videos.'),
-      ),
-      h('p', { text: 'Also:' }),
-      h('ul', null,
-        li('Click a timestamp in a comment to jump the video there.'),
-        li(code('Cmd/Ctrl + S'), ' opens and closes this panel; ', code('Esc'), ' closes it.'),
-        li('Type ', code('/key'), ' or ', h('a', { onclick: () => showAuth(true), text: 'click here' }), ' to change your API key.'),
-      ),
-    ));
-    ui.scroll.scrollTop = 0;
-  }
-
-  // --- API key screen ---
+  // --- API key card ---
   function showAuth(changing) {
     hideAuth();
     const existing = GM_getValue(KEY_STORE, '');
@@ -661,46 +633,53 @@
       type: 'password', placeholder: 'Paste API key (AIza…)', spellcheck: 'false', autocomplete: 'off',
       value: changing ? existing : '',
     });
-    const status = h('div', { class: 'status' });
+    const msg = h('div', { class: 'msg' });
     const save = async () => {
       const key = input.value.trim();
-      if (!key) { status.textContent = 'Paste a key first.'; return; }
-      status.className = 'status ok';
-      status.textContent = 'Checking key…';
+      if (!key) { msg.className = 'msg'; msg.textContent = 'Paste a key first.'; return; }
+      msg.className = 'msg ok';
+      msg.textContent = 'Checking key…';
       try {
         await apiGet('videos', { part: 'id', id: 'jNQXAC9IVRw' }, key);
         GM_setValue(KEY_STORE, key);
         hideAuth();
         cache.clear();
-        startForVideo(true);
+        current = null;
+        ui.input.focus();
+        if (ui.input.value.trim()) runQuery(ui.input.value);
       } catch (err) {
-        status.className = 'status';
-        status.textContent = errorText(err);
+        msg.className = 'msg';
+        msg.textContent = errorText(err);
       }
     };
-    input.ytcsKeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); save(); } };
-    ui.auth = h('div', { class: 'auth' },
-      h('h1', { text: changing ? 'YouTube API Key' : 'Welcome!' }),
-      h('p', { text: 'Please insert your YouTube Data API key.' }),
-      h('p', { text: 'It is saved in Tampermonkey on this computer and only sent to googleapis.com.' }),
-      input,
-      status,
+    input.ytcsKeydown = (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); save(); }
+      if (e.key === 'Escape' && existing) { e.preventDefault(); hideAuth(); ui.input.focus(); }
+    };
+    const link = (href, text) => h('a', { href, target: '_blank', rel: 'noopener', text });
+    ui.auth.replaceChildren(h('div', { class: 'auth' },
+      h('h2', { text: changing ? 'YouTube API key' : 'Set up comment search' }),
+      h('p', { text: 'Comment search needs your own YouTube Data API key. It is saved in Tampermonkey and only sent to googleapis.com.' }),
       h('div', { class: 'row' },
-        h('button', { text: 'Save key', onclick: save }),
-        changing && existing ? h('button', { class: 'secondary', text: 'Cancel', onclick: hideAuth }) : null,
+        input,
+        h('button', { class: 'primary', text: 'Save key', onclick: save }),
+        changing && existing ? h('button', { class: 'secondary', text: 'Cancel', onclick: () => { hideAuth(); ui.input.focus(); } }) : null,
       ),
+      msg,
       h('ol', null,
-        h('li', null, 'Open ', h('a', { href: 'https://console.cloud.google.com/apis/library/youtube.googleapis.com', target: '_blank', rel: 'noopener', text: 'YouTube Data API v3' }), ' in Google Cloud and click Enable (create a project if asked).'),
-        h('li', null, 'Go to ', h('a', { href: 'https://console.cloud.google.com/apis/credentials', target: '_blank', rel: 'noopener', text: 'Credentials' }), ', then Create credentials → API key.'),
-        h('li', null, 'Copy the key and paste it above. The free quota (10,000 units a day) covers thousands of searches.'),
+        h('li', null, 'Open ', link('https://console.cloud.google.com/apis/library/youtube.googleapis.com', 'YouTube Data API v3'), ' in Google Cloud and click Enable (create a project if asked).'),
+        h('li', null, 'Go to ', link('https://console.cloud.google.com/apis/credentials', 'Credentials'), ', then Create credentials → API key.'),
+        h('li', null, 'Paste the key above. The free quota (10,000 units a day) is plenty.'),
       ),
-    );
-    ui.root.append(ui.auth);
+    ));
+    ui.auth.hidden = false;
     setTimeout(() => input.focus(), 0);
   }
 
   function hideAuth() {
-    if (ui.auth) { ui.auth.remove(); ui.auth = null; }
+    if (!ui.auth) return;
+    ui.auth.hidden = true;
+    ui.auth.replaceChildren();
   }
 
   // --- Results ---
@@ -760,6 +739,7 @@
     if (!v) return;
     v.currentTime = secs;
     if (v.paused) v.play().catch(() => {});
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   }
 
   function renderComment(c, q, opts = {}) {
@@ -767,29 +747,29 @@
     const permalink = `https://www.youtube.com/watch?v=${vid}&lc=${c.id}`;
     const avatar = h('a', { class: 'avatar', href: c.authorUrl || null, target: '_blank', rel: 'noopener' });
     if (c.authorImg) avatar.style.backgroundImage = `url("${c.authorImg.replace(/"/g, '%22')}")`;
-    const side = h('div', { class: 'side' }, avatar);
     const text = renderText(c.text, q);
     const more = h('button', { class: 'more', text: 'Read more', hidden: true });
     more.addEventListener('click', () => {
       const open = text.classList.toggle('open');
       more.textContent = open ? 'Show less' : 'Read more';
     });
-    const el = h('div', { class: 'comment' + (opts.reply ? ' reply' : '') },
-      side,
-      h('div', { class: 'author' },
-        h('a', { class: 'name', href: c.authorUrl || null, target: '_blank', rel: 'noopener', text: c.author }),
-        opts.isCreator ? h('span', { class: 'badge', title: 'Creator' }, svgIcon(ICON_CHECK)) : null,
-        h('a', { class: 'date', href: permalink, target: '_blank', rel: 'noopener', title: new Date(c.published).toLocaleString(),
+    const body = h('div', { class: 'body' },
+      h('div', { class: 'head' },
+        h('a', { class: 'name' + (opts.isCreator ? ' creator' : ''), href: c.authorUrl || null, target: '_blank', rel: 'noopener', text: c.author },
+          opts.isCreator ? h('span', { class: 'badge', title: 'Creator' }, svgIcon(ICON_CHECK)) : null),
+        h('a', { class: 'date', href: permalink, title: 'Open this comment on YouTube to like or reply · ' + new Date(c.published).toLocaleString(),
           text: timeAgo(c.published) + (c.edited ? ' (edited)' : '') }),
-        c.likes ? h('span', { class: 'likes', title: c.likes.toLocaleString() + ' likes' }, svgIcon(ICON_LIKE), fmtCount(c.likes)) : null,
       ),
       text,
       more,
-      opts.otherVideo ? h('div', { class: 'other-video' }, 'On ', h('a', { href: `https://www.youtube.com/watch?v=${vid}`, target: '_blank', rel: 'noopener', text: 'another video' })) : null,
+      h('div', { class: 'tools' },
+        h('span', { class: 'likes', title: (c.likes || 0).toLocaleString() + ' likes' }, svgIcon(ICON_LIKE), c.likes ? fmtCount(c.likes) : ''),
+        opts.otherVideo ? h('span', { class: 'other-video' }, '· on ', h('a', { href: `https://www.youtube.com/watch?v=${vid}`, text: 'another video' })) : null,
+      ),
     );
     // Show "Read more" only when the text is actually clamped.
     requestAnimationFrame(() => { if (text.scrollHeight > text.clientHeight + 2) more.hidden = false; });
-    return { el, side };
+    return { el: h('div', { class: 'comment' }, avatar, body), body };
   }
 
   function renderThread(result, q, details) {
@@ -799,44 +779,54 @@
     const wrap = h('div', { class: 'thread' });
     const top = renderComment(thread.top, q, { isCreator: channelId && thread.top.authorId === channelId, otherVideo });
     wrap.append(top.el);
-    const repliesBox = h('div');
+    const repliesBox = h('div', { class: 'reply-list' });
     const drawReplies = (list) => repliesBox.replaceChildren(...list.map((c) =>
-      renderComment(c, q, { reply: true, isCreator: channelId && c.authorId === channelId }).el));
+      renderComment(c, q, { isCreator: channelId && c.authorId === channelId }).el));
     drawReplies(shown || []);
-    wrap.append(repliesBox);
 
     if (thread.replyCount > 0) {
       let expanded = false;
-      const btn = h('button', { class: 'replies-btn', title: 'Show replies', text: fmtCount(thread.replyCount) });
+      const n = thread.replyCount;
+      const label = () => expanded ? 'Hide replies'
+        : (shown && shown.length ? `Show all ${n.toLocaleString()} replies` : `${n.toLocaleString()} ${n === 1 ? 'reply' : 'replies'}`);
+      const btnText = h('span', { text: label() });
+      const btn = h('button', { class: 'replies-btn' }, h('span', { class: 'chev' }, svgIcon(ICON_CHEVRON)), btnText);
       btn.addEventListener('click', async () => {
-        if (expanded) { expanded = false; drawReplies(shown || []); btn.title = 'Show replies'; return; }
-        btn.disabled = true;
-        setBusy(true);
-        try {
-          const all = thread.replies.length >= thread.replyCount ? thread.replies : await loadReplies(thread.id);
-          expanded = true;
-          btn.title = 'Hide replies';
-          drawReplies(all);
-        } catch (err) {
-          repliesBox.replaceChildren(h('div', { class: 'message error' }, errorText(err)));
-        } finally {
-          btn.disabled = false;
-          setBusy(false);
+        if (expanded) {
+          expanded = false;
+          drawReplies(shown || []);
+        } else {
+          btn.disabled = true;
+          setBusy(true);
+          try {
+            const all = thread.replies.length >= thread.replyCount ? thread.replies : await loadReplies(thread.id);
+            expanded = true;
+            drawReplies(all);
+          } catch (err) {
+            repliesBox.replaceChildren(h('div', { class: 'status error' }, errorText(err)));
+          } finally {
+            btn.disabled = false;
+            setBusy(false);
+          }
         }
+        btn.classList.toggle('open', expanded);
+        btnText.textContent = label();
       });
-      top.side.append(btn);
+      top.body.append(btn);
     }
+    wrap.append(repliesBox);
     return wrap;
   }
 
-  function showResults(results, q, details) {
+  function showResults(results, q, details, raw) {
     current.results = results;
     current.rendered = 0;
     current.q = q;
     current.details = details;
-    ui.scroll.replaceChildren();
-    ui.scroll.scrollTop = 0;
-    if (!results.length) return showMessage('No comments found.');
+    ui.results.replaceChildren();
+    const n = results.length;
+    showStatus(n ? `${n.toLocaleString()} ${n === 1 ? 'comment matches' : 'comments match'} “${raw}”` : `No comments match “${raw}”.`, false, true);
+    setActive(true);
     renderMore();
   }
 
@@ -844,46 +834,45 @@
     if (!current || !current.results || current.rendered >= current.results.length) return;
     const next = current.results.slice(current.rendered, current.rendered + CONFIG.pageSize);
     current.rendered += next.length;
-    for (const r of next) ui.scroll.append(renderThread(r, current.q, current.details));
+    for (const r of next) ui.results.append(renderThread(r, current.q, current.details));
   }
 
   function updateCount(details, vd) {
-    ui.count.classList.toggle('ready', !!(details && vd && vd.threads));
-    if (!details) { ui.count.textContent = '…'; return; }
-    if (details.count == null) { ui.count.textContent = 'off'; ui.count.title = 'Comments are turned off'; return; }
-    ui.count.textContent = details.count ? fmtCount(details.count) : 'zero';
-    ui.count.title = canLoadAll(details)
-      ? `${details.count.toLocaleString()} comments` + (vd && vd.threads ? ', all loaded' : '')
-      : `${details.count.toLocaleString()} comments. Too many to load, so /regex/ and :creator are off; keyword search uses YouTube's search.`;
+    const ready = !!(details && vd && vd.threads);
+    ui.count.classList.toggle('ready', ready);
+    if (!details) { ui.count.textContent = ''; return; }
+    if (details.count == null) { ui.count.textContent = 'comments off'; return; }
+    if (!canLoadAll(details)) {
+      ui.count.textContent = `${fmtCount(details.count)} · YouTube search`;
+      ui.count.title = `Too many comments to download (limit ${CONFIG.maxLoadComments.toLocaleString()}), so keyword search uses YouTube's own search and /regex/ and :creator are off.`;
+      return;
+    }
+    ui.count.textContent = ready ? `${fmtCount(details.count)} loaded` : (vd && vd.loading ? `loading ${fmtCount(vd.loaded)} / ${fmtCount(details.count)}` : fmtCount(details.count));
+    ui.count.title = ready ? 'All comments downloaded; searches are instant.' : '';
   }
 
-  // Load details for the current video and (when small enough) prefetch
-  // all comments so searches are instant.
-  async function startForVideo(focus) {
+  // On first focus for a video: fetch its details and, when small enough,
+  // download every comment in the background so searches are instant.
+  async function prepare() {
     const id = videoId();
-    if (!id) { togglePanel(false); return; }
+    if (!id) return;
     if (!GM_getValue(KEY_STORE, '')) { showAuth(false); return; }
     const vd = videoData(id);
-    current = { vd };
-    updateCount(null);
-    if (!ui.input.value.trim()) showGuide();
-    if (focus) ui.input.focus();
-    const seq = ++requestSeq;
+    if (current && current.vd === vd && current.prepared) return;
+    current = { vd, prepared: true };
     try {
-      setBusy(true);
       const details = await loadDetails(vd);
-      if (seq !== requestSeq) return;
+      if (!current || current.vd !== vd) return;
       updateCount(details, vd);
-      setBusy(false);
       if (canLoadAll(details) && !vd.threads) {
-        loadAllThreads(vd).then(() => { if (current && current.vd === vd) updateCount(details, vd); }).catch(() => {});
+        const tick = setInterval(() => { if (current && current.vd === vd) updateCount(details, vd); }, 500);
+        loadAllThreads(vd)
+          .catch(() => {})
+          .finally(() => { clearInterval(tick); if (current && current.vd === vd) updateCount(details, vd); });
       }
-      if (ui.input.value.trim()) runQuery(ui.input.value);
     } catch (err) {
-      if (seq !== requestSeq) return;
-      setBusy(false);
-      if (err.reason === 'noKey') return showAuth(false);
-      showMessage(errorText(err), true);
+      if (current && current.vd === vd) current.prepared = false;
+      if (err.reason === 'noKey') showAuth(false);
     }
   }
 
@@ -897,14 +886,13 @@
     return results;
   }
 
-  async function runQuery(raw, setInput) {
-    if (setInput) ui.input.value = raw;
+  async function runQuery(raw) {
     raw = raw.trim();
-    if (!raw) return showGuide();
+    if (!raw) return clearSearch();
     if (raw === '/key') { ui.input.value = ''; return showAuth(true); }
-    if (raw === '/' || raw === '?' || raw === '/help') { ui.input.value = ''; return showGuide(); }
     const id = videoId();
     if (!id) return;
+    if (!GM_getValue(KEY_STORE, '')) return showAuth(false);
     const vd = videoData(id);
     if (!current || current.vd !== vd) current = { vd };
     const seq = ++requestSeq;
@@ -922,6 +910,7 @@
       let results;
       if (q.global) {
         if (q.kind !== 'keywords') throw new ApiError('empty', 'global: works with keywords only.');
+        showMessage('Searching the whole channel…');
         const threads = await searchApi({ allThreadsRelatedToChannelId: details.channelId, searchTerms: q.text });
         results = fromApi(threads, q, details);
       } else if (details.count == null) {
@@ -933,6 +922,7 @@
         const threads = await loadAllThreads(vd, (n) => {
           if (seq !== requestSeq) return;
           setBusy(true, Math.min(1, n / details.count));
+          updateCount(details, vd);
           showMessage(`Loading comments… ${n.toLocaleString()} of ${details.count.toLocaleString()}`);
         });
         updateCount(details, vd);
@@ -941,12 +931,13 @@
         setBusy(false);
         return showMessage(`/regex/ and :creator need every comment downloaded, but this video has ${details.count.toLocaleString()} (limit ${CONFIG.maxLoadComments.toLocaleString()}). Keyword search still works.`, true);
       } else {
+        showMessage('Searching…');
         const threads = await searchApi({ videoId: vd.id, searchTerms: q.text });
         results = fromApi(threads, q, details);
       }
       if (seq !== requestSeq) return;
       setBusy(false);
-      showResults(results, q, details);
+      showResults(results, q, details, raw);
     } catch (err) {
       if (seq !== requestSeq) return;
       setBusy(false);
@@ -955,87 +946,88 @@
     }
   }
 
-  function isOpen() {
-    return ui.root && !ui.root.hidden;
-  }
-
-  function togglePanel(force) {
-    const open = force != null ? force : !isOpen();
-    if (open && !videoId()) return false;
-    buildPanel();
-    if (open) {
-      syncTheme();
-      applyGeometry(geometry());
-      ui.root.hidden = false;
-      const id = videoId();
-      if (!current || current.vd.id !== id) startForVideo(true);
-      else {
-        ui.input.focus();
-        ui.input.select();
-      }
-    } else {
-      ui.root.hidden = true;
-      if (ui.root.contains(ui.root.getRootNode().activeElement)) ui.root.getRootNode().activeElement.blur();
+  // Cmd/Ctrl+S: jump to the search box (scrolling down to the comments,
+  // which also makes YouTube load them); again: back up to the video.
+  function focusSearch() {
+    if (ui.host && ui.host.shadowRoot.activeElement === ui.input) {
+      ui.input.blur();
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      return;
     }
-    return true;
+    const go = () => {
+      const top = ui.host.getBoundingClientRect().top + window.scrollY - 140;
+      window.scrollTo({ top: Math.max(0, top), behavior: 'smooth' });
+      ui.input.focus({ preventScroll: true });
+      ui.input.select();
+    };
+    if (placeHost()) return go();
+    const comments = commentsEl();
+    if (comments) comments.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    let tries = 0;
+    const wait = setInterval(() => {
+      if (placeHost()) { clearInterval(wait); go(); } else if (++tries > 40) clearInterval(wait);
+    }, 250);
   }
 
   // ------------------------------------------------------------------
   // Keyboard. Registered at document-start in the capture phase so it runs
-  // before YouTube's own shortcuts: Cmd/Ctrl+S toggles the panel, and keys
-  // typed inside the panel never reach YouTube (no "k" pausing the video).
+  // before YouTube's own shortcuts: Cmd/Ctrl+S jumps to the search box, and
+  // keys typed in it never reach YouTube (no "k" pausing the video).
   // ------------------------------------------------------------------
-  function fromPanel(e) {
+  function fromUs(e) {
     return ui.host && e.composedPath().includes(ui.host);
   }
 
   window.addEventListener('keydown', (e) => {
-    const isToggle = (e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && (e.code === 'KeyS' || e.key === 's' || e.key === 'S');
-    if (isToggle && (videoId() || isOpen())) {
+    const isShortcut = (e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && (e.code === 'KeyS' || e.key === 's' || e.key === 'S');
+    if (isShortcut && videoId()) {
       e.preventDefault();
       e.stopImmediatePropagation();
-      togglePanel();
+      focusSearch();
       return;
     }
-    if (!fromPanel(e)) return;
-    e.stopImmediatePropagation();
+    if (!fromUs(e)) return;
     const target = e.composedPath()[0];
-    if (e.key === 'Escape') {
-      e.preventDefault();
-      if (ui.auth && GM_getValue(KEY_STORE, '')) hideAuth();
-      else togglePanel(false);
-      return;
-    }
+    if (!target || !/^(INPUT|TEXTAREA)$/.test(target.tagName)) return; // buttons/links keep normal keys
+    e.stopImmediatePropagation();
     // Our own key handlers run from here, since the event stops above.
-    if (target && typeof target.ytcsKeydown === 'function') target.ytcsKeydown(e);
+    if (typeof target.ytcsKeydown === 'function') target.ytcsKeydown(e);
   }, true);
 
   for (const type of ['keyup', 'keypress']) {
-    window.addEventListener(type, (e) => { if (fromPanel(e)) e.stopImmediatePropagation(); }, true);
+    window.addEventListener(type, (e) => {
+      if (!fromUs(e)) return;
+      const target = e.composedPath()[0];
+      if (target && /^(INPUT|TEXTAREA)$/.test(target.tagName)) e.stopImmediatePropagation();
+    }, true);
   }
 
   // ------------------------------------------------------------------
   // Page lifecycle
   // ------------------------------------------------------------------
   document.addEventListener('yt-navigate-finish', () => {
-    if (!isOpen()) return;
     const id = videoId();
-    if (!id) togglePanel(false);
-    else if (!current || current.vd.id !== id) {
-      ui.input.value = '';
-      startForVideo(false);
+    if (current && current.vd.id !== id) {
+      current = null;
+      if (ui.host) { clearSearch(); hideAuth(); updateCount(null); }
     }
+    schedulePlace();
   });
 
-
-  window.addEventListener('resize', () => {
-    if (isOpen()) applyGeometry(geometry());
-  });
+  const startObserver = () => {
+    new MutationObserver(() => { if (videoId() && (!ui.host || !ui.host.isConnected)) schedulePlace(); })
+      .observe(document.documentElement, { childList: true, subtree: true });
+    schedulePlace();
+  };
+  if (document.documentElement) startObserver();
+  else document.addEventListener('DOMContentLoaded', startObserver, { once: true });
 
   if (typeof GM_registerMenuCommand === 'function') {
-    GM_registerMenuCommand('Open comment search (Cmd/Ctrl+S)', () => togglePanel(true));
+    GM_registerMenuCommand('Search comments (Cmd/Ctrl+S)', () => { if (videoId()) focusSearch(); });
     GM_registerMenuCommand('Set YouTube API key', () => {
-      if (togglePanel(true) !== false) showAuth(true);
+      if (!videoId()) return;
+      focusSearch();
+      setTimeout(() => { if (ui.host) showAuth(true); }, 800);
     });
   }
 })();

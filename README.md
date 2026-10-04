@@ -47,9 +47,9 @@ Updates are automatic: your userscript manager checks this repo and installs a n
 </p>
 
 <h2>YouTube Comment Search</h2>
-<p>Press <b>Cmd+S</b> (Mac) or <b>Ctrl+S</b> on a video to open a panel that searches its comments. Matches are underlined, timestamps jump the video, and reply threads expand.</p>
+<p>Adds a search box to a video's comment section. Press <b>Cmd+S</b> (Mac) or <b>Ctrl+S</b> to jump to it. Results replace the comment list until you clear the search; matches are underlined, timestamps jump the video, and reply threads expand.</p>
 <ul>
-  <li>Needs your own free <a href="https://console.cloud.google.com/apis/library/youtube.googleapis.com">YouTube Data API v3</a> key. The panel asks for it the first time and saves it in Tampermonkey.</li>
+  <li>Needs your own free <a href="https://console.cloud.google.com/apis/library/youtube.googleapis.com">YouTube Data API v3</a> key. The search box asks for it the first time and saves it in Tampermonkey.</li>
   <li>Search by keywords, <code>/regex/</code>, <code>:creator</code> (comments by the uploader), or <code>global: xyz</code> to search the whole channel.</li>
   <li>Type <code>/key</code> in the search box to change your API key.</li>
 </ul>
