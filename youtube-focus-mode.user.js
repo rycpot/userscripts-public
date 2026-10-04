@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         YouTube Focus Mode + Full-Sized Theater Mode
 // @namespace    https://tampermonkey.net/
-// @version      2.3.2
+// @version      2.3.3
 // @description  Focus button that dims everything but the video, full-sized Theater mode by default, H.264 (MP4/AVC) instead of VP9/AV1, auto 1080p quality, a mini player when you scroll down to the comments, hidden related videos, a screenshot button and autoplay-next turned off.
 // @author       you
 // @icon         https://www.youtube.com/favicon.ico
@@ -86,29 +86,37 @@
   const [miniV, miniH] = CONFIG.miniPlayerPosition.split('-');
   const style = document.createElement('style');
   style.textContent = `
+    /* Matches YouTube's Subscribe button: 40px pill with a soft top-to-
+       bottom dark gradient (sampled from the light theme). */
     #${BTN_ID} {
       margin-left: 8px;
       padding: 0 16px;
-      height: 36px;
-      border-radius: 18px;
+      height: 40px;
+      border-radius: 20px;
       border: none;
-      background: #303030;
+      background: linear-gradient(180deg, #2e2e2e 0%, #0f0f0f 100%);
       color: #fff;
+      font-family: "Roboto", "Arial", sans-serif;
       font-size: 14px;
       font-weight: 500;
+      line-height: 40px;
       cursor: pointer;
       display: inline-flex;
       align-items: center;
       gap: 6px;
+      flex: none;
     }
-    #${BTN_ID}.active {
-      background: #3ea6ff;
-      color: #0f0f0f;
+    #${BTN_ID}:hover {
+      background: linear-gradient(180deg, #3d3d3d 0%, #1f1f1f 100%);
     }
     html[dark] #${BTN_ID} {
-      background: #272727;
+      background: linear-gradient(180deg, #3d3d3d 0%, #272727 100%);
       color: #fff;
     }
+    html[dark] #${BTN_ID}:hover {
+      background: linear-gradient(180deg, #4a4a4a 0%, #333 100%);
+    }
+    #${BTN_ID}.active,
     html[dark] #${BTN_ID}.active {
       background: #3ea6ff;
       color: #0f0f0f;
@@ -750,7 +758,16 @@
       console.debug('[YT Focus] subscribe anchor not found yet');
       return false;
     }
-    anchor.parentElement.insertBefore(makeButton(), anchor.nextSibling);
+    const btn = makeButton();
+    anchor.parentElement.insertBefore(btn, anchor.nextSibling);
+    // Follow Subscribe's actual height if YouTube changes it.
+    const sub = anchor.querySelector('button');
+    const h = sub && sub.getBoundingClientRect().height;
+    if (h >= 24 && h <= 56) {
+      btn.style.height = h + 'px';
+      btn.style.lineHeight = h + 'px';
+      btn.style.borderRadius = (h / 2) + 'px';
+    }
     console.debug('[YT Focus] button inserted next to', anchor);
     return true;
   }
