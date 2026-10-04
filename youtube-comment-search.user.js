@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         YouTube Comment Search
 // @namespace    https://tampermonkey.net/
-// @version      2.0.0
+// @version      2.0.1
 // @description  Adds a search box to a video's comment section (Cmd+S / Ctrl+S jumps to it). Uses your own YouTube Data API key. Highlights matches, expands reply threads, makes timestamps clickable, and supports /regex/, :creator and global: (whole channel).
 // @author       you
 // @icon         https://www.youtube.com/favicon.ico
@@ -954,6 +954,10 @@
       window.scrollTo({ top: 0, behavior: 'smooth' });
       return;
     }
+    // Start downloading right away, while YouTube is still rendering the
+    // comment section (as the old panel did), not when the box appears.
+    buildHost();
+    prepare();
     const go = () => {
       const top = ui.host.getBoundingClientRect().top + window.scrollY - 140;
       window.scrollTo({ top: Math.max(0, top), behavior: 'smooth' });
