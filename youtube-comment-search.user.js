@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         YouTube Comment Search
 // @namespace    https://tampermonkey.net/
-// @version      2.2.1
+// @version      2.2.2
 // @description  Adds a search box to a video's comment section (Cmd+S / Ctrl+S jumps to it). Uses your own YouTube Data API key. Highlights matches, expands reply threads, makes timestamps clickable, and supports /regex/, :creator and global: (whole channel).
 // @author       you
 // @icon         https://www.youtube.com/favicon.ico
@@ -32,6 +32,7 @@
     replyConcurrency: 6,    // reply threads fetched at the same time
     searchPages: 10,        // YouTube-search pages (100 threads each) for big videos
     pageSize: 50,          // results rendered per scroll step
+    gap: 24,               // px of space above and below the search box (text to box edge)
     // Downloaded comments are saved in this browser for the videos you
     // searched most recently. On the next visit only new comments are
     // fetched; a full re-download (fresh likes and replies) happens once
@@ -495,7 +496,7 @@
     ytd-comments.ytcs-active #sections > #contents,
     ytd-comments.ytcs-active #sections > #continuations { display: none !important; }
     ytd-comments.ytcs-inline:not(.ytcs-show-simplebox) ytd-comments-header-renderer #simple-box { display: none !important; }
-    ytd-comments.ytcs-inline:not(.ytcs-show-simplebox) ytd-comments-header-renderer { margin-bottom: 12px !important; }
+    ytd-comments.ytcs-inline:not(.ytcs-show-simplebox) ytd-comments-header-renderer { margin-bottom: 0 !important; }
   `;
 
   const CSS = `
@@ -652,7 +653,7 @@
       }
     };
     ui.input.addEventListener('focus', () => { ui.hint.hidden = false; prepare(); });
-    ui.input.addEventListener('blur', () => { ui.hint.hidden = true; });
+    ui.input.addEventListener('blur', () => { ui.hint.hidden = true; schedulePlace(); });
 
     ui.count = h('span', { class: 'count' });
     ui.clear = h('button', { class: 'clear', title: 'Clear search', hidden: true, onclick: () => { clearSearch(); ui.input.focus(); } }, svgIcon(ICON_X));
@@ -737,8 +738,69 @@
   function schedulePlace() {
     if (placeScheduled) return;
     placeScheduled = true;
-    requestAnimationFrame(() => { placeScheduled = false; placeHost(); });
+    requestAnimationFrame(() => { placeScheduled = false; placeHost(); equalizeGaps(); });
   }
+
+  // --- Even spacing ---
+  // YouTube's own margins around this spot differ above and below (and
+  // between layouts), so measure the visible text instead of guessing:
+  // "N Comments" → box, and box → first comment, are both CONFIG.gap.
+  function firstTextRect(root) {
+    if (!root) return null;
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+      acceptNode: (n) => (n.nodeValue.trim() ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT),
+    });
+    const range = document.createRange();
+    for (let n = walker.nextNode(), i = 0; n && i < 200; n = walker.nextNode(), i++) {
+      range.selectNodeContents(n);
+      const r = range.getClientRects()[0];
+      if (r && r.height > 0 && r.width > 0) return r;
+    }
+    return null;
+  }
+
+  function equalizeGaps() {
+    if (!ui.host || !ui.host.isConnected || !ui.host.hasAttribute('inline')) {
+      if (ui.host) { ui.host.style.marginTop = ''; ui.host.style.marginBottom = ''; }
+      return;
+    }
+    const comments = commentsEl();
+    const barEl = ui.host.shadowRoot.querySelector('.bar');
+    if (!comments || !barEl.getBoundingClientRect().height) return;
+    const clamp = (v) => Math.max(-64, Math.min(64, Math.round(v)));
+    const titleEl = comments.querySelector('ytd-comments-header-renderer #count, ytd-comments-header-renderer #title');
+    // Below is only measured while YouTube's list shows and nothing else sits
+    // under the bar (hint, key card, results).
+    const measureBelow = !isActive() && ui.hint.hidden && ui.auth.hidden;
+    const contents = measureBelow && comments.querySelector('#sections > #contents');
+    // Neighbouring margins can collapse into ours, so adjust and re-measure
+    // a few times until both gaps settle (each pass forces a layout).
+    for (let pass = 0; pass < 4; pass++) {
+      const bar = barEl.getBoundingClientRect();
+      let settled = true;
+      const title = firstTextRect(titleEl);
+      if (title) {
+        const err = CONFIG.gap - (bar.top - title.bottom);
+        if (Math.abs(err) >= 1) {
+          settled = false;
+          const cur = parseFloat(getComputedStyle(ui.host).marginTop) || 0;
+          ui.host.style.marginTop = clamp(cur + err) + 'px';
+        }
+      }
+      const first = contents && firstTextRect(contents);
+      if (first) {
+        const barNow = barEl.getBoundingClientRect();
+        const err = CONFIG.gap - (first.top - barNow.bottom);
+        if (Math.abs(err) >= 1) {
+          settled = false;
+          const cur = parseFloat(getComputedStyle(ui.host).marginBottom) || 0;
+          ui.host.style.marginBottom = clamp(cur + err) + 'px';
+        }
+      }
+      if (settled) break;
+    }
+  }
+
 
   function isActive() {
     const c = commentsEl();
@@ -1181,14 +1243,21 @@
   });
 
   const startObserver = () => {
-    new MutationObserver(() => {
-      if (videoId() && (!ui.host || !ui.host.isConnected)) schedulePlace();
+    new MutationObserver((records) => {
+      if (!videoId()) return;
+      // Re-place if YouTube dropped the box; re-measure gaps when the comment
+      // section itself changes (not on every player/time-display update).
+      if (!ui.host || !ui.host.isConnected) return schedulePlace();
+      const comments = commentsEl();
+      if (ui.host.hasAttribute('inline') && comments && records.some((r) => comments.contains(r.target))) schedulePlace();
     })
       .observe(document.documentElement, { childList: true, subtree: true });
     schedulePlace();
   };
   if (document.documentElement) startObserver();
   else document.addEventListener('DOMContentLoaded', startObserver, { once: true });
+
+  window.addEventListener('resize', () => { if (ui.host) schedulePlace(); }, { passive: true });
 
   if (typeof GM_registerMenuCommand === 'function') {
     GM_registerMenuCommand('Search comments (Cmd/Ctrl+S)', () => { if (videoId()) focusSearch(); });
