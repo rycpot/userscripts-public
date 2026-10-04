@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         YouTube Focus Mode + Full-Sized Theater Mode
 // @namespace    https://tampermonkey.net/
-// @version      2.1.0
+// @version      2.2.0
 // @description  Focus button that dims everything but the video, full-sized Theater mode by default, H.264 (MP4/AVC) instead of VP9/AV1, auto 1080p quality, a mini player when you scroll down to the comments, hidden related videos, a screenshot button and autoplay-next turned off.
 // @author       you
 // @icon         https://www.youtube.com/favicon.ico
@@ -30,6 +30,7 @@
     miniPlayerWidth: 640,
     miniPlayerHeight: 360,
     miniPlayerPosition: 'top-right', // 'top-left', 'top-right', 'bottom-left', 'bottom-right'
+    miniPlayerMargin: 15,       // gap from the window edges, in px
     hideRelated: true,
     screenshotButton: true,
     disableAutoplay: true,      // turns off the "Autoplay next video" toggle
@@ -77,6 +78,7 @@
   const OVERLAY_ID = 'yt-focus-mode-overlay';
   const SHOT_ID = 'yt-focus-screenshot-btn';
   const MINI_CLASS = 'yt-focus-mini-player';
+  const MINI_BAR_ID = 'yt-focus-mini-progress';
   let focusOn = false;
   let rafId = null;
 
@@ -148,21 +150,27 @@
     }
 
     /* --- Mini player ---
-       Pins YouTube's own player to a corner. Every control is hidden; a
-       click on the picture plays/pauses (handled in onMiniClick). Narrow
-       windows shrink it to fit, keeping 16:9. */
+       Pins YouTube's own player to a corner, shown in the browser's top
+       layer (popover) so no page element can cover it. Every control is
+       hidden except a thin seek bar; a click on the picture plays/pauses.
+       The height follows the video's own aspect ratio (no black bars) and
+       narrow windows shrink it to fit. */
     body.${MINI_CLASS} #movie_player:not(.ytp-fullscreen) {
       position: fixed !important;
-      ${miniV === 'top' ? 'top: 72px !important; bottom: auto !important;' : 'bottom: 16px !important; top: auto !important;'}
-      ${miniH === 'left' ? 'left: 16px !important; right: auto !important;' : 'right: 16px !important; left: auto !important;'}
-      width: min(${CONFIG.miniPlayerWidth}px, calc(100vw - 32px)) !important;
-      height: calc(min(${CONFIG.miniPlayerWidth}px, calc(100vw - 32px)) * ${CONFIG.miniPlayerHeight / CONFIG.miniPlayerWidth}) !important;
+      ${miniV === 'top' ? `top: ${CONFIG.miniPlayerMargin}px !important; bottom: auto !important;` : `bottom: ${CONFIG.miniPlayerMargin}px !important; top: auto !important;`}
+      ${miniH === 'left' ? `left: ${CONFIG.miniPlayerMargin}px !important; right: auto !important;` : `right: ${CONFIG.miniPlayerMargin}px !important; left: auto !important;`}
+      --yt-focus-mini-w: min(${CONFIG.miniPlayerWidth}px, calc(100vw - ${2 * CONFIG.miniPlayerMargin}px));
+      width: var(--yt-focus-mini-w) !important;
+      height: calc(var(--yt-focus-mini-w) * var(--yt-focus-mini-ratio, ${CONFIG.miniPlayerHeight / CONFIG.miniPlayerWidth})) !important;
       max-width: none !important;
       max-height: none !important;
       margin: 0 !important;
+      padding: 0 !important;
+      border: 0 !important;
       transform: none !important;
       z-index: 2198 !important;
       opacity: 1 !important;
+      color: inherit !important;
       background: #000 !important;
       border-radius: 8px !important;
       overflow: hidden !important;
@@ -184,19 +192,62 @@
       width: 100% !important;
       height: 100% !important;
       margin: 0 !important;
-      object-fit: contain !important;
+      object-fit: cover !important;
     }
     /* No controls, overlays, end screens or watermark; captions stay. */
-    body.${MINI_CLASS} #movie_player:not(.ytp-fullscreen) > :not(.html5-video-container):not(#ytp-caption-window-container) {
+    body.${MINI_CLASS} #movie_player:not(.ytp-fullscreen) > :not(.html5-video-container):not(#ytp-caption-window-container):not(#${MINI_BAR_ID}) {
       display: none !important;
     }
-    /* Ancestors that form their own stacking layer are lifted, otherwise
-       the comments paint over the pinned player. */
+    /* Fallback for browsers without popover support: lift ancestors that
+       form their own stacking layer so the comments don't cover it. */
     body.${MINI_CLASS} [data-yt-focus-lift] {
       z-index: 2198 !important;
     }
     body.${MINI_CLASS} [data-yt-focus-lift="static"] {
       position: relative !important;
+    }
+
+    /* Seek bar along the bottom edge of the mini player. */
+    #${MINI_BAR_ID} {
+      display: none;
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      height: 12px;            /* hit area; the visible track is thinner */
+      z-index: 100;
+      cursor: pointer;
+      touch-action: none;
+    }
+    body.${MINI_CLASS} #movie_player:not(.ytp-fullscreen) #${MINI_BAR_ID} {
+      display: block;
+    }
+    #${MINI_BAR_ID} .yt-focus-track {
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      height: 4px;
+      background: rgba(255, 255, 255, .3);
+      transition: height .1s;
+    }
+    #${MINI_BAR_ID}:hover .yt-focus-track,
+    #${MINI_BAR_ID}.dragging .yt-focus-track {
+      height: 7px;
+    }
+    #${MINI_BAR_ID} .yt-focus-loaded,
+    #${MINI_BAR_ID} .yt-focus-played {
+      position: absolute;
+      left: 0;
+      top: 0;
+      bottom: 0;
+      width: 0;
+    }
+    #${MINI_BAR_ID} .yt-focus-loaded {
+      background: rgba(255, 255, 255, .4);
+    }
+    #${MINI_BAR_ID} .yt-focus-played {
+      background: #f03;
     }
 
     /* --- Screenshot button: sized to match its neighbours (syncShotSize) --- */
@@ -445,14 +496,114 @@
     for (const el of document.querySelectorAll('[data-yt-focus-lift]')) el.removeAttribute('data-yt-focus-lift');
   }
 
+  // The browser's top layer (popover API) sits above every page element,
+  // whatever stacking layers or transforms its ancestors have, and is
+  // always positioned against the window.
   function setMini(on) {
     if (document.body.classList.contains(MINI_CLASS) === on) return;
     const p = getPlayer();
-    if (on && p) liftAncestors(p);
+    if (on && p) {
+      updateMiniRatio();
+      insertMiniBar();
+      if (typeof p.showPopover === 'function') {
+        p.setAttribute('popover', 'manual');
+        try { p.showPopover(); } catch (e) { p.removeAttribute('popover'); liftAncestors(p); }
+      } else {
+        liftAncestors(p);
+      }
+    }
     document.body.classList.toggle(MINI_CLASS, on);
-    if (!on) clearLift();
+    if (!on) {
+      if (p && p.hasAttribute('popover')) {
+        try { p.hidePopover(); } catch (e) { /* already hidden */ }
+        p.removeAttribute('popover');
+      }
+      clearLift();
+    }
+    updateMiniBar();
     // Let the player re-measure itself for the new size.
     window.dispatchEvent(new Event('resize'));
+  }
+
+  // Match the mini player's shape to the video (e.g. 2:1 videos get a
+  // 640x320 player instead of black bars).
+  function updateMiniRatio() {
+    const video = document.querySelector('#movie_player video.html5-main-video');
+    if (!video || !video.videoWidth || !video.videoHeight) return;
+    document.documentElement.style.setProperty('--yt-focus-mini-ratio', String(video.videoHeight / video.videoWidth));
+  }
+
+  // --- Seek bar ---
+  let barDragging = false;
+  let barJustDragged = false;
+
+  function insertMiniBar() {
+    if (!CONFIG.miniPlayer || document.getElementById(MINI_BAR_ID)) return true;
+    const p = document.querySelector('ytd-player #movie_player');
+    if (!p) return false;
+    const bar = document.createElement('div');
+    bar.id = MINI_BAR_ID;
+    const track = document.createElement('div');
+    track.className = 'yt-focus-track';
+    for (const cls of ['yt-focus-loaded', 'yt-focus-played']) {
+      const el = document.createElement('div');
+      el.className = cls;
+      track.appendChild(el);
+    }
+    bar.appendChild(track);
+    p.appendChild(bar);
+    return true;
+  }
+
+  function videoDuration(p, video) {
+    const d = typeof p.getDuration === 'function' ? p.getDuration() : 0;
+    return d > 0 ? d : (video && isFinite(video.duration) ? video.duration : 0);
+  }
+
+  function updateMiniBar(fraction) {
+    const bar = document.getElementById(MINI_BAR_ID);
+    const p = getPlayer();
+    if (!bar || !p || !document.body.classList.contains(MINI_CLASS)) return;
+    const video = p.querySelector('video');
+    const dur = videoDuration(p, video);
+    if (!dur || !video) return;
+    const played = fraction !== undefined ? fraction : video.currentTime / dur;
+    let loaded = 0;
+    const b = video.buffered;
+    for (let i = 0; i < b.length; i++) {
+      if (b.start(i) <= video.currentTime + 0.5) loaded = Math.max(loaded, b.end(i));
+    }
+    bar.querySelector('.yt-focus-played').style.width = (Math.min(1, played) * 100) + '%';
+    bar.querySelector('.yt-focus-loaded').style.width = (Math.min(1, loaded / dur) * 100) + '%';
+  }
+
+  function barFraction(e) {
+    const r = document.getElementById(MINI_BAR_ID).getBoundingClientRect();
+    return Math.min(1, Math.max(0, (e.clientX - r.left) / r.width));
+  }
+
+  function seekTo(fraction, final) {
+    const p = getPlayer();
+    const video = p && p.querySelector('video');
+    const dur = p && videoDuration(p, video);
+    if (!dur) return;
+    if (typeof p.seekTo === 'function') p.seekTo(fraction * dur, final);
+    else if (video) video.currentTime = fraction * dur;
+    updateMiniBar(fraction);
+  }
+
+  function onBarMove(e) {
+    if (!barDragging) return;
+    seekTo(barFraction(e), false);
+  }
+
+  function onBarUp(e) {
+    if (!barDragging) return;
+    barDragging = false;
+    barJustDragged = true;
+    setTimeout(() => { barJustDragged = false; }, 0);
+    document.getElementById(MINI_BAR_ID).classList.remove('dragging');
+    seekTo(barFraction(e), true);
   }
 
   function updateMiniPlayer() {
@@ -482,6 +633,23 @@
     if (!p || p.classList.contains('ytp-fullscreen') || !p.contains(e.target)) return;
     e.preventDefault();
     e.stopImmediatePropagation();
+    if (barDragging) {
+      if (e.type === 'pointerup') onBarUp(e);
+      return;
+    }
+    if (barJustDragged && e.type === 'click') {
+      barJustDragged = false; // the click that ends a drag isn't play/pause
+      return;
+    }
+    const bar = document.getElementById(MINI_BAR_ID);
+    if (bar && bar.contains(e.target)) {
+      if (e.type === 'pointerdown' && e.button === 0) {
+        barDragging = true;
+        bar.classList.add('dragging');
+        seekTo(barFraction(e), false);
+      }
+      return;
+    }
     if (e.type !== 'click' || e.button !== 0) return;
     const video = p.querySelector('video');
     const playing = typeof p.getPlayerState === 'function' ? [1, 3].includes(p.getPlayerState()) : video && !video.paused;
@@ -677,6 +845,15 @@
     for (const type of ['click', 'dblclick', 'mousedown', 'mouseup', 'pointerdown', 'pointerup']) {
       window.addEventListener(type, onMiniPointer, true);
     }
+    window.addEventListener('pointermove', onBarMove, true);
+    window.addEventListener('pointerup', onBarUp, true);
+    window.addEventListener('pointercancel', onBarUp, true);
+    // Media events don't bubble; listen in the capture phase.
+    document.addEventListener('timeupdate', () => { if (!barDragging) updateMiniBar(); }, true);
+    document.addEventListener('progress', () => { if (!barDragging) updateMiniBar(); }, true);
+    document.addEventListener('loadedmetadata', updateMiniRatio, true);
+    document.addEventListener('resize', updateMiniRatio, true); // <video> size change
+    document.addEventListener('fullscreenchange', () => { if (document.fullscreenElement) setMini(false); });
   }
 
   if (document.readyState === 'loading') {
