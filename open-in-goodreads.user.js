@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Open in Goodreads
 // @namespace    open-in-goodreads
-// @version      3.5
+// @version      3.6
 // @description  Adds a button to Amazon book pages to redirect to Goodreads page based on ASIN/ISBN
 // @match        https://*.amazon.com/*
 // @match        https://*.amazon.co.uk/*
@@ -137,6 +137,9 @@
                     font: italic 400 17px/1 Baskerville, "Libre Baskerville", "Baskerville Old Face", Georgia, serif;
                     letter-spacing: 0.02em;
                     color: #382110;
+                    /* lift so its baseline lines up with the wordmark's */
+                    position: relative;
+                    top: -2px;
                 }
                 #open-in-goodreads-btn .ogr-wordmark { height: 18px; width: auto; display: block; }
             `;
