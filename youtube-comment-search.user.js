@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         YouTube Comment Search
 // @namespace    https://tampermonkey.net/
-// @version      2.0.1
+// @version      2.1.0
 // @description  Adds a search box to a video's comment section (Cmd+S / Ctrl+S jumps to it). Uses your own YouTube Data API key. Highlights matches, expands reply threads, makes timestamps clickable, and supports /regex/, :creator and global: (whole channel).
 // @author       you
 // @icon         https://www.youtube.com/favicon.ico
@@ -32,6 +32,12 @@
     replyConcurrency: 6,    // reply threads fetched at the same time
     searchPages: 10,        // YouTube-search pages (100 threads each) for big videos
     pageSize: 50,          // results rendered per scroll step
+    // Downloaded comments are saved in this browser for the videos you
+    // searched most recently. On the next visit only new comments are
+    // fetched; a full re-download (fresh likes and replies) happens once
+    // the saved copy is older than cacheFullRefreshHours.
+    cacheVideos: 20,
+    cacheFullRefreshHours: 24,
   };
 
   const API = 'https://www.googleapis.com/youtube/v3';
@@ -223,6 +229,91 @@
     return details.count != null && details.count > 0 && details.count <= CONFIG.maxLoadComments;
   }
 
+  // --- Saved comments (IndexedDB on youtube.com; index in Tampermonkey) ---
+  const CACHE_INDEX = 'ytcsCacheIndex';
+  let dbPromise = null;
+
+  function db() {
+    if (!dbPromise) {
+      dbPromise = new Promise((resolve, reject) => {
+        const req = indexedDB.open('ytcs-comment-cache', 1);
+        req.onupgradeneeded = () => req.result.createObjectStore('videos', { keyPath: 'id' });
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+      });
+      dbPromise.catch(() => { dbPromise = null; });
+    }
+    return dbPromise;
+  }
+
+  async function idbDo(mode, fn) {
+    const d = await db();
+    return new Promise((resolve, reject) => {
+      const tx = d.transaction('videos', mode);
+      const req = fn(tx.objectStore('videos'));
+      tx.oncomplete = () => resolve(req && req.result);
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error);
+    });
+  }
+
+  async function cacheGet(id) {
+    try { return await idbDo('readonly', (st) => st.get(id)); } catch (e) { return null; }
+  }
+
+  async function cachePut(record) {
+    try {
+      await idbDo('readwrite', (st) => st.put(record));
+      // Keep only the most recently searched videos.
+      const index = (GM_getValue(CACHE_INDEX, []) || []).filter((e) => e.id !== record.id);
+      index.unshift({ id: record.id, usedAt: Date.now() });
+      const drop = index.splice(CONFIG.cacheVideos);
+      GM_setValue(CACHE_INDEX, index);
+      if (drop.length) await idbDo('readwrite', (st) => { drop.forEach((e) => st.delete(e.id)); return null; });
+    } catch (e) { /* storage unavailable: just don't save */ }
+  }
+
+  // Fill in long reply threads (YouTube only includes 5), several at a time.
+  async function fillReplies(vd, threads) {
+    if (!CONFIG.fetchAllReplies) return;
+    const todo = threads.filter((t) => t.replyCount > t.replies.length);
+    const worker = async () => {
+      while (todo.length) {
+        const t = todo.shift();
+        try {
+          const full = await loadReplies(t.id);
+          vd.loaded += full.length - t.replies.length;
+          t.replies = full;
+        } catch (err) {
+          if (/quota|keyInvalid|API_KEY/i.test(err.reason || '')) throw err;
+          // otherwise keep the 5 replies we already have
+        }
+        if (vd.onProgress) vd.onProgress(vd.loaded);
+      }
+    };
+    await Promise.all(Array.from({ length: CONFIG.replyConcurrency }, worker));
+  }
+
+  // Newest-first pages until we reach comments we already have.
+  async function fetchNewThreads(vd, knownIds) {
+    const fresh = [];
+    let pageToken;
+    for (let page = 0; page < 100; page++) {
+      const res = await apiGet('commentThreads', {
+        part: 'snippet,replies', videoId: vd.id, maxResults: 100, order: 'time',
+        textFormat: 'plainText', ...(pageToken ? { pageToken } : {}),
+      });
+      const items = (res.items || []).map(toThread);
+      const known = items.filter((t) => knownIds.has(t.id)).length;
+      for (const t of items) if (!knownIds.has(t.id)) fresh.push(t);
+      pageToken = res.nextPageToken;
+      // A page that is mostly comments we already have means we've caught up
+      // (a pinned or out-of-order comment alone doesn't stop us).
+      if (!pageToken || (items.length && known >= items.length / 2)) break;
+    }
+    return fresh;
+  }
+
   function loadAllThreads(vd, onProgress) {
     if (vd.threads) return Promise.resolve(vd.threads);
     vd.onProgress = onProgress || null;
@@ -231,8 +322,33 @@
       return vd.loading;
     }
     vd.loading = (async () => {
-      const all = [];
       vd.loaded = 0;
+      const saved = await cacheGet(vd.id);
+      const fresh = saved && Date.now() - saved.fullAt < CONFIG.cacheFullRefreshHours * 3600e3;
+
+      if (fresh) {
+        // Reuse the saved copy and add only what's new since.
+        let threads = saved.threads;
+        vd.loaded = threads.reduce((n, t) => n + 1 + t.replies.length, 0);
+        if (vd.onProgress) vd.onProgress(vd.loaded);
+        try {
+          const added = await fetchNewThreads(vd, new Set(threads.map((t) => t.id)));
+          if (added.length) {
+            vd.loaded += added.reduce((n, t) => n + 1 + t.replies.length, 0);
+            await fillReplies(vd, added);
+            threads = [...added, ...threads];
+          }
+        } catch (err) {
+          if (err.reason === 'noKey') throw err;
+          // offline / quota: the saved copy is still useful
+        }
+        vd.savedAt = saved.fullAt;
+        vd.threads = threads;
+        cachePut({ id: vd.id, fullAt: saved.fullAt, updatedAt: Date.now(), threads });
+        return threads;
+      }
+
+      const all = [];
       let pageToken;
       do {
         const res = await apiGet('commentThreads', {
@@ -247,32 +363,16 @@
         if (vd.onProgress) vd.onProgress(vd.loaded);
         pageToken = res.nextPageToken;
       } while (pageToken);
-
-      // Fill in long reply threads, several at a time.
-      if (CONFIG.fetchAllReplies) {
-        const todo = all.filter((t) => t.replyCount > t.replies.length);
-        const worker = async () => {
-          while (todo.length) {
-            const t = todo.shift();
-            try {
-              const full = await loadReplies(t.id);
-              vd.loaded += full.length - t.replies.length;
-              t.replies = full;
-            } catch (err) {
-              if (/quota|keyInvalid|API_KEY/i.test(err.reason || '')) throw err;
-              // otherwise keep the 5 replies we already have
-            }
-            if (vd.onProgress) vd.onProgress(vd.loaded);
-          }
-        };
-        await Promise.all(Array.from({ length: CONFIG.replyConcurrency }, worker));
-      }
+      await fillReplies(vd, all);
+      vd.savedAt = Date.now();
       vd.threads = all;
+      cachePut({ id: vd.id, fullAt: vd.savedAt, updatedAt: vd.savedAt, threads: all });
       return all;
     })();
     vd.loading.catch(() => { vd.loading = null; });
     return vd.loading;
   }
+
 
   // YouTube's keyword search. order=relevance together with searchTerms
   // fails ("processingFailure") on many videos, so ask for newest first
@@ -394,11 +494,12 @@
   const PAGE_CSS = `
     ytd-comments.ytcs-active #sections > #contents,
     ytd-comments.ytcs-active #sections > #continuations { display: none !important; }
+    ytd-comments.ytcs-inline:not(.ytcs-show-simplebox) ytd-comments-header-renderer #simple-box { display: none !important; }
   `;
 
   const CSS = `
     :host {
-      display: block; margin: 0 0 24px;
+      display: block; margin: 0 0 20px;
       --fg: var(--yt-spec-text-primary, #0f0f0f);
       --fg2: var(--yt-spec-text-secondary, #606060);
       --line: var(--yt-spec-10-percent-layer, rgba(0,0,0,.1));
@@ -411,6 +512,7 @@
       color: var(--fg);
       font: 400 14px/20px "Roboto", "Arial", sans-serif;
     }
+    :host([inline]) { margin: 0 0 16px; }
     :host([dark]) { --error: #ff6b6b; --mark: orange; --mark-style: dotted; }
     * { box-sizing: border-box; }
     [hidden] { display: none !important; }
@@ -442,6 +544,14 @@
     @keyframes slide { from { transform: translateX(-100%); } to { transform: translateX(340%); } }
     .hint { margin: 6px 14px 0; font-size: 12px; color: var(--fg2); }
     .hint code { font-size: 12px; padding: 0 4px; }
+    .hint .chip { cursor: pointer; border-radius: 4px; padding: 0 5px; background: var(--chip); font-size: 12px; line-height: 18px; }
+    .hint .chip:hover { background: var(--hover); color: var(--fg); }
+    .compose {
+      flex: none; display: inline-flex; align-items: center; gap: 4px; height: 30px; padding: 0 10px 0 8px;
+      border-radius: 15px; font-size: 13px; font-weight: 500; color: var(--fg2);
+    }
+    .compose:hover { background: var(--hover); color: var(--fg); }
+    .compose svg { width: 18px; height: 18px; }
 
     /* Status line + messages */
     .status { display: flex; align-items: center; gap: 12px; margin: 16px 0 8px; color: var(--fg2); }
@@ -500,6 +610,7 @@
   `;
 
   const ICON_SEARCH = 'M20.87 20.17l-5.59-5.59C16.35 13.35 17 11.75 17 10c0-3.87-3.13-7-7-7s-7 3.13-7 7 3.13 7 7 7c1.75 0 3.35-.65 4.58-1.71l5.59 5.59.7-.71zM10 16c-3.31 0-6-2.69-6-6s2.69-6 6-6 6 2.69 6 6-2.69 6-6 6z';
+  const ICON_PENCIL = 'M14.06 9.02l.92.92L5.92 19H5v-.92l9.06-9.06M17.66 3c-.25 0-.51.1-.7.29l-1.83 1.83 3.75 3.75 1.83-1.83a.996.996 0 0 0 0-1.41l-2.34-2.34c-.2-.2-.45-.29-.71-.29zm-3.6 3.19L3 17.25V21h3.75L17.81 9.94l-3.75-3.75z';
   const ICON_CHEVRON = 'M12 15.7 5.6 9.4l.8-.8 5.6 5.6 5.6-5.6.8.8z';
 
   // ------------------------------------------------------------------
@@ -540,10 +651,29 @@
     ui.clear = h('button', { class: 'clear', title: 'Clear search', hidden: true, onclick: () => { clearSearch(); ui.input.focus(); } }, svgIcon(ICON_X));
     ui.input.addEventListener('input', () => { ui.clear.hidden = !ui.input.value && !isActive(); });
     ui.progress = h('div', { class: 'progress' }, h('div'));
-    const code = (s) => h('code', { text: s });
+    // Clickable examples. mousedown keeps focus in the box (the hint hides on blur).
+    const chip = (label, title, act) => {
+      const b = h('button', { class: 'chip', title, text: label });
+      b.addEventListener('mousedown', (e) => e.preventDefault());
+      b.addEventListener('click', act);
+      return b;
+    };
+    const fill = (value, caret, run) => () => {
+      ui.input.value = value;
+      ui.input.focus();
+      ui.input.setSelectionRange(caret, caret);
+      ui.clear.hidden = false;
+      if (run) runQuery(value);
+    };
     ui.hint = h('div', { class: 'hint', hidden: true },
-      'Press Enter to search. Also ', code('/regex/'), ', ', code(':creator'), ', ', code('global: words'),
-      ' (whole channel), ', code('/key'), ' to change API key.');
+      'Press Enter to search. Also ',
+      chip('/regex/', 'Search with a regular expression', fill('//', 1)), ', ',
+      chip(':creator', 'Comments by the uploader', fill(':creator', 8, true)), ', ',
+      chip('global: words', 'Search the whole channel', fill('global: ', 8)), ' (whole channel), ',
+      chip('/key', 'Change your API key', () => { ui.input.value = ''; showAuth(true); }), ' to change API key.');
+    // "Add a comment" is folded away while the search box sits in its spot.
+    ui.compose = h('button', { class: 'compose', title: 'Add a comment', hidden: true, onclick: openCompose },
+      svgIcon(ICON_PENCIL), h('span', { text: 'Comment' }));
     ui.status = h('div', { class: 'status', hidden: true });
     ui.auth = h('div', { hidden: true });
     ui.results = h('div', { class: 'results' });
@@ -553,7 +683,7 @@
     }, { rootMargin: '800px 0px' }).observe(ui.sentinel);
 
     shadow.append(
-      h('div', { class: 'bar' }, h('span', { class: 'icon' }, svgIcon(ICON_SEARCH)), ui.input, ui.count, ui.clear, ui.progress),
+      h('div', { class: 'bar' }, h('span', { class: 'icon' }, svgIcon(ICON_SEARCH)), ui.input, ui.count, ui.clear, ui.compose, ui.progress),
       ui.hint, ui.auth, ui.status, ui.results, ui.sentinel,
     );
     syncTheme();
@@ -564,16 +694,36 @@
     if (ui.host) ui.host.toggleAttribute('dark', document.documentElement.hasAttribute('dark'));
   }
 
-  // Keep the bar just below YouTube's comments header ("N Comments · Sort
-  // by" and "Add a comment"). YouTube re-renders this area, so re-check.
+  // Put the bar where YouTube's "Add a comment" box is (folding that box
+  // away), or just below the comments header if that box isn't there.
+  // YouTube re-renders this area, so this is re-checked on DOM changes.
   function placeHost() {
     if (!videoId()) return false;
     const comments = commentsEl();
     const header = comments && comments.querySelector('#sections > #header');
     if (!header || !header.parentElement) return false;
     buildHost();
-    if (ui.host.previousElementSibling !== header) header.after(ui.host);
+    const simple = header.querySelector('ytd-comments-header-renderer #simple-box');
+    if (simple && simple.parentElement) {
+      if (ui.host.nextElementSibling !== simple) simple.before(ui.host);
+    } else if (ui.host.previousElementSibling !== header) {
+      header.after(ui.host);
+    }
+    const inline = !!simple;
+    ui.host.toggleAttribute('inline', inline);
+    comments.classList.toggle('ytcs-inline', inline);
+    ui.compose.hidden = !inline || comments.classList.contains('ytcs-show-simplebox');
     return true;
+  }
+
+  function openCompose() {
+    const comments = commentsEl();
+    if (!comments) return;
+    comments.classList.add('ytcs-show-simplebox');
+    ui.compose.hidden = true;
+    const simple = comments.querySelector('ytd-comments-header-renderer #simple-box');
+    const placeholder = simple && simple.querySelector('#placeholder-area, #simplebox-placeholder');
+    if (placeholder) placeholder.click();
   }
 
   let placeScheduled = false;
@@ -848,7 +998,9 @@
       return;
     }
     ui.count.textContent = ready ? `${fmtCount(details.count)} loaded` : (vd && vd.loading ? `loading ${fmtCount(vd.loaded)} / ${fmtCount(details.count)}` : fmtCount(details.count));
-    ui.count.title = ready ? 'All comments downloaded; searches are instant.' : '';
+    ui.count.title = ready
+      ? `All comments downloaded${vd.savedAt ? ` (full copy from ${timeAgo(new Date(vd.savedAt).toISOString())}, plus anything new)` : ''}; searches are instant.`
+      : '';
   }
 
   // On first focus for a video: fetch its details and, when small enough,
@@ -1011,6 +1163,8 @@
   // ------------------------------------------------------------------
   document.addEventListener('yt-navigate-finish', () => {
     const id = videoId();
+    const c = commentsEl();
+    if (c) c.classList.remove('ytcs-show-simplebox');
     if (current && current.vd.id !== id) {
       current = null;
       if (ui.host) { clearSearch(); hideAuth(); updateCount(null); }

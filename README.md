@@ -52,6 +52,8 @@ Updates are automatic: your userscript manager checks this repo and installs a n
   <li>Needs your own free <a href="https://console.cloud.google.com/apis/library/youtube.googleapis.com">YouTube Data API v3</a> key. The search box asks for it the first time and saves it in Tampermonkey.</li>
   <li>Search by keywords, <code>/regex/</code>, <code>:creator</code> (comments by the uploader), or <code>global: xyz</code> to search the whole channel.</li>
   <li>Type <code>/key</code> in the search box to change your API key.</li>
+  <li>The box takes the place of "Add a comment"; click <b>Comment</b> in the box to bring the comment box back.</li>
+  <li>Downloaded comments are saved for the last 20 videos you searched, so a refresh only fetches new comments (full refresh every 24 hours).</li>
 </ul>
 
 <p>
