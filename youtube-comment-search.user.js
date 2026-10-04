@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         YouTube Comment Search
 // @namespace    https://tampermonkey.net/
-// @version      1.0.0
-// @description  Search a video's comments by keyword from a panel opened with Cmd+S / Ctrl+S. Uses your own YouTube Data API key. Highlights matches, expands reply threads, makes timestamps clickable, and supports filters (:, :now, :all, :link, :reply, :creator, :new, :old, /regex/, global:).
+// @version      1.1.0
+// @description  Search a video's comments by keyword from a panel opened with Cmd+S / Ctrl+S. Uses your own YouTube Data API key. Highlights matches, expands reply threads, makes timestamps clickable, and supports /regex/, :creator and global: (whole channel).
 // @author       you
 // @icon         https://www.youtube.com/favicon.ico
 // @match        https://www.youtube.com/*
@@ -25,10 +25,9 @@
   // ------------------------------------------------------------------
   const CONFIG = {
     // Videos with up to this many comments are downloaded once (100 per
-    // API request, 1 quota unit each) so filters and instant local search
-    // work. Bigger videos use YouTube's server-side keyword search.
+    // API request, 1 quota unit each) so search is instant and /regex/ and
+    // :creator work. Bigger videos use YouTube's server-side keyword search.
     maxLoadComments: 3000,
-    nearbySeconds: 15,     // window for ':now' and single-timestamp searches
     pageSize: 50,          // results rendered per scroll step
   };
 
@@ -98,7 +97,6 @@
   }
   const TIME_RE = /\b(?:\d{1,2}:)?\d{1,2}:\d{2}\b/g;
   const URL_RE = /\bhttps?:\/\/[^\s<>()]+[^\s<>().,!?;:'"]/g;
-  const HAS_URL = /\bhttps?:\/\//i;
 
   function isoDuration(d) {
     const m = /P(?:(\d+)D)?T?(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/.exec(d || '') || [];
@@ -247,10 +245,10 @@
     return vd.loading;
   }
 
-  async function searchApi(params, newest) {
+  async function searchApi(params) {
     const res = await apiGet('commentThreads', {
       part: 'snippet,replies', maxResults: 100, textFormat: 'plainText',
-      order: newest ? 'time' : 'relevance', ...params,
+      order: 'relevance', ...params,
     });
     return (res.items || []).map(toThread);
   }
@@ -272,9 +270,9 @@
   // ------------------------------------------------------------------
   // Queries
   // ------------------------------------------------------------------
-  // Returns { kind, tokens, regexp, times, global, newest, oldest }.
+  // Returns { kind: 'keywords' | 'regexp' | 'creator', tokens, regexp, text, global }.
   function parseQuery(raw) {
-    const q = { tokens: [], regexp: null, times: null, filter: null, global: false, newest: false, oldest: false };
+    const q = { tokens: [], regexp: null, global: false };
     const re = /^\/(.+)\/([a-z]*)$/i.exec(raw.trim());
     if (re) {
       let flags = re[2].replace(/[gy]/g, '');
@@ -288,21 +286,9 @@
       return q;
     }
     let s = raw.trim().toLowerCase();
-    if (/^global:/.test(s)) { q.global = true; s = s.replace(/^global:/, ''); }
-    if (/:new\b/.test(s)) { q.newest = true; s = s.replace(/:new\b/g, ''); }
-    if (/:old\b/.test(s)) { q.oldest = true; s = s.replace(/:old\b/g, ''); }
-    s = s.trim();
-    const filter = /^:(all|link|reply|creator|now)?$/.exec(s);
-    if (filter) {
-      q.filter = filter[1] || 'time';
-      q.kind = 'filter';
-      return q;
-    }
-    const range = /^((?:\d{1,2}:)?\d{1,2}:\d{2})(?:\s*-\s*((?:\d{1,2}:)?\d{1,2}:\d{2}))?$/.exec(s);
-    if (range) {
-      const a = hms(range[1]);
-      q.times = range[2] ? [a, hms(range[2])] : [a - CONFIG.nearbySeconds, a + CONFIG.nearbySeconds];
-      q.kind = 'time';
+    if (/^global:/.test(s)) { q.global = true; s = s.replace(/^global:/, '').trim(); }
+    if (!q.global && s === ':creator') {
+      q.kind = 'creator';
       return q;
     }
     q.tokens = tokenize(s);
@@ -316,70 +302,35 @@
     return [t.top, ...t.replies];
   }
 
-  function timesIn(text) {
-    return (text.match(TIME_RE) || []).map(hms);
-  }
-
   // Local search over downloaded threads. Each result is
-  // { thread, shown: [comments to show under the top comment], score, at }.
+  // { thread, shown: [replies to show under the top comment], score }.
   function localSearch(threads, q, details) {
     const out = [];
-    const nowT = () => {
-      const v = document.querySelector('#movie_player video, video.html5-main-video');
-      return v ? v.currentTime : 0;
-    };
-    let range = q.times;
-    if (q.filter === 'now') {
-      const t = nowT();
-      range = [t - CONFIG.nearbySeconds, t + CONFIG.nearbySeconds];
-    }
     for (const t of threads) {
       const all = commentsOf(t);
       let match = false;
       let score = 0;
       let shown = [];
-      let at = Infinity;
       if (q.kind === 'keywords') {
         const perComment = all.map((c) => {
           const n = normalize(c.text);
-          return q.tokens.reduce((s, tok) => s + (n.split(tok).length - 1), 0);
+          return q.tokens.reduce((sum, tok) => sum + (n.split(tok).length - 1), 0);
         });
         const joined = normalize(all.map((c) => c.text).join(' '));
         match = q.tokens.every((tok) => joined.includes(tok));
         score = perComment.reduce((a, b) => a + b, 0);
         shown = t.replies.filter((c, i) => perComment[i + 1] > 0);
-      } else if (q.kind === 'regexp') {
-        const hits = all.map((c) => q.regexp.test(c.text));
-        match = hits.some(Boolean);
-        shown = t.replies.filter((c, i) => hits[i + 1]);
-      } else if (q.filter === 'all') {
-        match = true;
-      } else if (q.filter === 'link') {
-        const hits = all.map((c) => HAS_URL.test(c.text));
-        match = hits.some(Boolean);
-        shown = t.replies.filter((c, i) => hits[i + 1]);
-      } else if (q.filter === 'reply') {
-        match = t.replyCount > 0;
-      } else if (q.filter === 'creator') {
-        const hits = all.map((c) => c.authorId && c.authorId === details.channelId);
-        match = hits.some(Boolean);
-        shown = t.replies.filter((c, i) => hits[i + 1]);
       } else {
-        // ':' (any timestamp), ':now', or a time / time range
-        const hits = all.map((c) => timesIn(c.text).filter((x) =>
-          x <= (details.duration || Infinity) && (!range || (x >= range[0] && x <= range[1]))));
-        match = hits.some((list) => list.length);
-        hits.forEach((list) => list.forEach((x) => { at = Math.min(at, x); }));
-        shown = t.replies.filter((c, i) => hits[i + 1].length);
+        const hits = q.kind === 'regexp'
+          ? all.map((c) => q.regexp.test(c.text))
+          : all.map((c) => !!c.authorId && c.authorId === details.channelId); // :creator
+        match = hits.some(Boolean);
+        shown = t.replies.filter((c, i) => hits[i + 1]);
       }
-      if (match) out.push({ thread: t, shown, score, at });
+      if (match) out.push({ thread: t, shown, score });
     }
     const byLikes = (a, b) => b.thread.top.likes - a.thread.top.likes;
-    if (q.newest) out.sort((a, b) => b.thread.top.published.localeCompare(a.thread.top.published));
-    else if (q.oldest) out.sort((a, b) => a.thread.top.published.localeCompare(b.thread.top.published));
-    else if (q.kind === 'time' || q.filter === 'time' || q.filter === 'now') out.sort((a, b) => a.at - b.at || byLikes(a, b));
-    else if (q.kind === 'keywords') out.sort((a, b) => b.score - a.score || byLikes(a, b));
-    else out.sort(byLikes);
+    out.sort(q.kind === 'keywords' ? (a, b) => b.score - a.score || byLikes(a, b) : byLikes);
     return out;
   }
 
@@ -434,14 +385,12 @@
     header input::placeholder { color: var(--placeholder); font-size: 15px; }
     header input:focus::placeholder { opacity: 0; }
     .count {
-      flex: none; min-width: 3ch; height: 22px; padding: 2px 6px 0; margin-right: 4px;
+      flex: none; min-width: 3ch; height: 22px; padding: 2px 6px 0; margin-right: 4px; text-align: center; line-height: 18px;
       background: var(--chip); color: var(--strong); font-size: 12px; white-space: nowrap;
       border-radius: 4px 4px 0 0; border-bottom: 2px solid transparent; opacity: .75;
       transition: opacity .2s, border-color .2s;
     }
-    .count:hover { opacity: 1; }
-    .count.ready { border-bottom-color: var(--count-border); }
-    .count[disabled] { cursor: default; color: var(--muted); border-radius: 4px; }
+    .count.ready { border-bottom-color: var(--count-border); opacity: 1; }
     .close { position: absolute; top: 12px; right: 10px; width: 32px; height: 32px; padding: 6px; border-radius: 50%; opacity: .6; z-index: 7; }
     .close:hover { opacity: 1; background: var(--chip); }
     .progress { position: absolute; left: 0; bottom: 0; height: 1px; width: 0; background: var(--progress); }
@@ -594,9 +543,7 @@
     ui.input.ytcsKeydown = (e) => {
       if (e.key === 'Enter') { e.preventDefault(); runQuery(ui.input.value); }
     };
-    ui.count = h('button', { class: 'count', title: 'Comments on this video', disabled: true, text: '…', onclick: () => {
-      if (!ui.count.disabled) runQuery(':all', true);
-    } });
+    ui.count = h('div', { class: 'count', title: 'Comments on this video', text: '…' });
     ui.progress = h('div', { class: 'progress' });
     ui.scroll = h('div', { class: 'scroll' });
     ui.scroll.addEventListener('scroll', () => {
@@ -637,24 +584,16 @@
     const li = (...c) => h('li', null, ...c);
     ui.scroll.replaceChildren(h('div', { class: 'guide' },
       h('h1', { text: 'Quick Guide' }),
-      h('p', { text: 'Type keywords and press Enter. Matches are underlined.' }),
-      h('p', { text: 'Filters (videos with up to ' + CONFIG.maxLoadComments.toLocaleString() + ' comments):' }),
       h('ul', null,
-        li('Type ', code(':'), ' for comments with timestamps (0:37).'),
-        li('Type ', code(':now'), ' for comments close to the current time.'),
-        li('Type ', code('1:30'), ' or ', code('1:00-2:00'), ' for comments about that moment.'),
-        li('Type ', code(':all'), ' for all comments.'),
-        li('Type ', code(':link'), ' for comments with links.'),
-        li('Type ', code(':reply'), ' for comments with replies.'),
-        li('Type ', code(':creator'), ' for comments by the uploader.'),
+        li('Type keywords and press ', code('Enter'), '. Matches are underlined.'),
         li('Type ', code('/regex/'), ' to search with a regular expression.'),
-      ),
-      h('p', { text: 'Other options:' }),
-      h('ul', null,
+        li('Type ', code(':creator'), ' for comments by the uploader.'),
         li('Use ', code('global: xyz'), ' to search all of the channel\'s videos.'),
-        li('Add ', code(':new'), ' or ', code(':old'), ' to sort newest or oldest first.'),
+      ),
+      h('p', { text: 'Also:' }),
+      h('ul', null,
         li('Click a timestamp in a comment to jump the video there.'),
-        li(h('kbd', null, code('Cmd/Ctrl + S')), ' opens and closes this panel; ', code('Esc'), ' closes it.'),
+        li(code('Cmd/Ctrl + S'), ' opens and closes this panel; ', code('Esc'), ' closes it.'),
         li('Type ', code('/key'), ' or ', h('a', { onclick: () => showAuth(true), text: 'click here' }), ' to change your API key.'),
       ),
     ));
@@ -856,14 +795,13 @@
   }
 
   function updateCount(details, vd) {
-    if (!details) { ui.count.textContent = '…'; ui.count.disabled = true; ui.count.classList.remove('ready'); return; }
-    if (details.count == null) { ui.count.textContent = 'off'; ui.count.disabled = true; ui.count.classList.remove('ready'); return; }
+    ui.count.classList.toggle('ready', !!(details && vd && vd.threads));
+    if (!details) { ui.count.textContent = '…'; return; }
+    if (details.count == null) { ui.count.textContent = 'off'; ui.count.title = 'Comments are turned off'; return; }
     ui.count.textContent = details.count ? fmtCount(details.count) : 'zero';
-    ui.count.disabled = !canLoadAll(details);
-    ui.count.classList.toggle('ready', !!(vd && vd.threads));
     ui.count.title = canLoadAll(details)
-      ? `${details.count.toLocaleString()} comments. Click to list all.`
-      : `${details.count.toLocaleString()} comments. Too many to load, so filters are off; keyword search uses YouTube's search.`;
+      ? `${details.count.toLocaleString()} comments` + (vd && vd.threads ? ', all loaded' : '')
+      : `${details.count.toLocaleString()} comments. Too many to load, so /regex/ and :creator are off; keyword search uses YouTube's search.`;
   }
 
   // Load details for the current video and (when small enough) prefetch
@@ -903,7 +841,6 @@
     const results = localSearch(threads, q, details);
     const seen = new Set(results.map((r) => r.thread.id));
     for (const t of threads) if (!seen.has(t.id)) results.push({ thread: t, shown: [] });
-    if (q.oldest) results.sort((a, b) => a.thread.top.published.localeCompare(b.thread.top.published));
     return results;
   }
 
@@ -932,7 +869,7 @@
       let results;
       if (q.global) {
         if (q.kind !== 'keywords') throw new ApiError('empty', 'global: works with keywords only.');
-        const threads = await searchApi({ allThreadsRelatedToChannelId: details.channelId, searchTerms: q.text }, q.newest);
+        const threads = await searchApi({ allThreadsRelatedToChannelId: details.channelId, searchTerms: q.text });
         results = fromApi(threads, q, details);
       } else if (details.count == null) {
         throw new ApiError('commentsDisabled');
@@ -949,9 +886,9 @@
         results = localSearch(threads, q, details);
       } else if (q.kind !== 'keywords') {
         setBusy(false);
-        return showMessage(`Filters need every comment downloaded, but this video has ${details.count.toLocaleString()} (limit ${CONFIG.maxLoadComments.toLocaleString()}). Keyword search still works.`, true);
+        return showMessage(`/regex/ and :creator need every comment downloaded, but this video has ${details.count.toLocaleString()} (limit ${CONFIG.maxLoadComments.toLocaleString()}). Keyword search still works.`, true);
       } else {
-        const threads = await searchApi({ videoId: vd.id, searchTerms: q.text }, q.newest);
+        const threads = await searchApi({ videoId: vd.id, searchTerms: q.text });
         results = fromApi(threads, q, details);
       }
       if (seq !== requestSeq) return;

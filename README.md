@@ -50,7 +50,7 @@ Updates are automatic: your userscript manager checks this repo and installs a n
 <p>Press <b>Cmd+S</b> (Mac) or <b>Ctrl+S</b> on a video to open a panel that searches its comments. Matches are underlined, timestamps jump the video, and reply threads expand.</p>
 <ul>
   <li>Needs your own free <a href="https://console.cloud.google.com/apis/library/youtube.googleapis.com">YouTube Data API v3</a> key. The panel asks for it the first time and saves it in Tampermonkey.</li>
-  <li>Filters: <code>:</code> timestamps, <code>:now</code>, <code>1:00-2:00</code>, <code>:all</code>, <code>:link</code>, <code>:reply</code>, <code>:creator</code>, <code>/regex/</code>, <code>:new</code> / <code>:old</code>, and <code>global:</code> to search the whole channel.</li>
+  <li>Search by keywords, <code>/regex/</code>, <code>:creator</code> (comments by the uploader), or <code>global: xyz</code> to search the whole channel.</li>
   <li>Type <code>/key</code> in the search box to change your API key.</li>
 </ul>
 
