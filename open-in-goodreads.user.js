@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Open in Goodreads
 // @namespace    open-in-goodreads
-// @version      3.6
+// @version      3.7
 // @description  Adds a button to Amazon book pages to redirect to Goodreads page based on ASIN/ISBN
 // @match        https://*.amazon.com/*
 // @match        https://*.amazon.co.uk/*
@@ -119,7 +119,7 @@
                     margin: 10px auto;
                     display: inline-flex;
                     align-items: center;
-                    gap: 10px;
+                    gap: 5px;
                     height: 36px;
                     padding: 0 18px;
                     background: #f4f1ea;
