@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         YouTube Comment Search
 // @namespace    https://tampermonkey.net/
-// @version      1.1.1
+// @version      1.2.0
 // @description  Search a video's comments by keyword from a panel opened with Cmd+S / Ctrl+S. Uses your own YouTube Data API key. Highlights matches, expands reply threads, makes timestamps clickable, and supports /regex/, :creator and global: (whole channel).
 // @author       you
 // @icon         https://www.youtube.com/favicon.ico
@@ -25,9 +25,12 @@
   // ------------------------------------------------------------------
   const CONFIG = {
     // Videos with up to this many comments are downloaded once (100 per
-    // API request, 1 quota unit each) so search is instant and /regex/ and
-    // :creator work. Bigger videos use YouTube's server-side keyword search.
-    maxLoadComments: 3000,
+    // API request, 1 quota unit each) so search is complete and instant and
+    // /regex/ and :creator work. Bigger videos use YouTube's own search.
+    maxLoadComments: 10000,
+    fetchAllReplies: true,  // YouTube only includes 5 replies per thread; fetch the rest
+    replyConcurrency: 6,    // reply threads fetched at the same time
+    searchPages: 10,        // YouTube-search pages (100 threads each) for big videos
     pageSize: 50,          // results rendered per scroll step
   };
 
@@ -230,17 +233,41 @@
     }
     vd.loading = (async () => {
       const all = [];
+      vd.loaded = 0;
       let pageToken;
       do {
         const res = await apiGet('commentThreads', {
           part: 'snippet,replies', videoId: vd.id, maxResults: 100, order: 'time',
           textFormat: 'plainText', ...(pageToken ? { pageToken } : {}),
         });
-        for (const item of res.items || []) all.push(toThread(item));
-        vd.loaded = all.reduce((n, t) => n + 1 + t.replies.length, 0);
+        for (const item of res.items || []) {
+          const t = toThread(item);
+          all.push(t);
+          vd.loaded += 1 + t.replies.length;
+        }
         if (vd.onProgress) vd.onProgress(vd.loaded);
         pageToken = res.nextPageToken;
       } while (pageToken);
+
+      // Fill in long reply threads, several at a time.
+      if (CONFIG.fetchAllReplies) {
+        const todo = all.filter((t) => t.replyCount > t.replies.length);
+        const worker = async () => {
+          while (todo.length) {
+            const t = todo.shift();
+            try {
+              const full = await loadReplies(t.id);
+              vd.loaded += full.length - t.replies.length;
+              t.replies = full;
+            } catch (err) {
+              if (/quota|keyInvalid|API_KEY/i.test(err.reason || '')) throw err;
+              // otherwise keep the 5 replies we already have
+            }
+            if (vd.onProgress) vd.onProgress(vd.loaded);
+          }
+        };
+        await Promise.all(Array.from({ length: CONFIG.replyConcurrency }, worker));
+      }
       vd.threads = all;
       return all;
     })();
@@ -251,12 +278,12 @@
   // YouTube's keyword search. order=relevance together with searchTerms
   // fails ("processingFailure") on many videos, so ask for newest first
   // (we rank the matches ourselves) and fall back once if even that fails.
-  // Up to 3 pages (300 threads, 1 quota unit each).
+  // Up to CONFIG.searchPages pages (100 threads, 1 quota unit each).
   async function searchApi(params) {
     const out = [];
     let pageToken;
     let order = 'time';
-    for (let page = 0; page < 3; page++) {
+    for (let page = 0; page < CONFIG.searchPages; page++) {
       let res;
       try {
         res = await apiGet('commentThreads', {
@@ -289,7 +316,7 @@
       });
       for (const c of res.items || []) out.push(toComment(c.snippet, c.id));
       pageToken = res.nextPageToken;
-    } while (pageToken && out.length < 1000);
+    } while (pageToken && out.length < 5000);
     return out.sort((a, b) => a.published.localeCompare(b.published));
   }
 
