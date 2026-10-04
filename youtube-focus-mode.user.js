@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         YouTube Focus Mode + Full-Sized Theater Mode
 // @namespace    https://tampermonkey.net/
-// @version      2.0.0
+// @version      2.1.0
 // @description  Focus button that dims everything but the video, full-sized Theater mode by default, H.264 (MP4/AVC) instead of VP9/AV1, auto 1080p quality, a mini player when you scroll down to the comments, hidden related videos, a screenshot button and autoplay-next turned off.
 // @author       you
 // @icon         https://www.youtube.com/favicon.ico
@@ -76,7 +76,6 @@
   const BTN_ID = 'yt-focus-mode-btn';
   const OVERLAY_ID = 'yt-focus-mode-overlay';
   const SHOT_ID = 'yt-focus-screenshot-btn';
-  const MINI_CLOSE_ID = 'yt-focus-mini-close';
   const MINI_CLASS = 'yt-focus-mini-player';
   let focusOn = false;
   let rafId = null;
@@ -148,61 +147,68 @@
       display: none !important;
     }
 
-    /* --- Mini player --- */
-    body.${MINI_CLASS} ytd-player #movie_player:not(.ytp-fullscreen) {
+    /* --- Mini player ---
+       Pins YouTube's own player to a corner. Every control is hidden; a
+       click on the picture plays/pauses (handled in onMiniClick). Narrow
+       windows shrink it to fit, keeping 16:9. */
+    body.${MINI_CLASS} #movie_player:not(.ytp-fullscreen) {
       position: fixed !important;
       ${miniV === 'top' ? 'top: 72px !important; bottom: auto !important;' : 'bottom: 16px !important; top: auto !important;'}
       ${miniH === 'left' ? 'left: 16px !important; right: auto !important;' : 'right: 16px !important; left: auto !important;'}
-      width: ${CONFIG.miniPlayerWidth}px !important;
-      height: ${CONFIG.miniPlayerHeight}px !important;
+      width: min(${CONFIG.miniPlayerWidth}px, calc(100vw - 32px)) !important;
+      height: calc(min(${CONFIG.miniPlayerWidth}px, calc(100vw - 32px)) * ${CONFIG.miniPlayerHeight / CONFIG.miniPlayerWidth}) !important;
+      max-width: none !important;
+      max-height: none !important;
+      margin: 0 !important;
+      transform: none !important;
       z-index: 2198 !important;
+      opacity: 1 !important;
       background: #000 !important;
       border-radius: 8px !important;
       overflow: hidden !important;
       box-shadow: 0 4px 24px rgba(0, 0, 0, .5);
+      cursor: pointer !important;
     }
-    body.${MINI_CLASS} #movie_player:not(.ytp-fullscreen) video.html5-main-video {
+    /* The video's wrapper normally has no height of its own (the player
+       sizes the <video> in pixels), so make both fill the mini player. */
+    body.${MINI_CLASS} #movie_player:not(.ytp-fullscreen) .html5-video-container {
+      position: absolute !important;
+      inset: 0 !important;
       width: 100% !important;
       height: 100% !important;
+    }
+    body.${MINI_CLASS} #movie_player:not(.ytp-fullscreen) video.html5-main-video {
+      position: absolute !important;
       left: 0 !important;
       top: 0 !important;
-      margin-left: 0 !important;
+      width: 100% !important;
+      height: 100% !important;
+      margin: 0 !important;
+      object-fit: contain !important;
     }
-    body.${MINI_CLASS} #movie_player:not(.ytp-fullscreen) .ytp-chrome-bottom {
-      width: calc(100% - 24px) !important;
-      left: 12px !important;
-    }
-    body.${MINI_CLASS} #movie_player:not(.ytp-fullscreen) .ytp-size-button,
-    body.${MINI_CLASS} #movie_player:not(.ytp-fullscreen) .ytp-ce-element,
-    body.${MINI_CLASS} #movie_player:not(.ytp-fullscreen) .ytp-iv-player-content {
+    /* No controls, overlays, end screens or watermark; captions stay. */
+    body.${MINI_CLASS} #movie_player:not(.ytp-fullscreen) > :not(.html5-video-container):not(#ytp-caption-window-container) {
       display: none !important;
     }
-    #${MINI_CLOSE_ID} {
-      display: none;
-      position: absolute;
-      top: 8px;
-      ${miniH === 'left' ? 'right' : 'left'}: 8px;
-      width: 28px;
-      height: 28px;
-      border: none;
-      border-radius: 50%;
-      background: rgba(0, 0, 0, .6);
-      color: #fff;
-      font-size: 18px;
-      line-height: 28px;
-      text-align: center;
-      cursor: pointer;
-      z-index: 70;
-      padding: 0;
+    /* Ancestors that form their own stacking layer are lifted, otherwise
+       the comments paint over the pinned player. */
+    body.${MINI_CLASS} [data-yt-focus-lift] {
+      z-index: 2198 !important;
     }
-    body.${MINI_CLASS} #movie_player:not(.ytp-fullscreen):not(.ytp-autohide) #${MINI_CLOSE_ID} {
-      display: block;
+    body.${MINI_CLASS} [data-yt-focus-lift="static"] {
+      position: relative !important;
     }
 
-    /* --- Screenshot button --- */
+    /* --- Screenshot button: sized to match its neighbours (syncShotSize) --- */
+    #${SHOT_ID} {
+      display: inline-flex !important;
+      align-items: center;
+      justify-content: center;
+      vertical-align: top;
+    }
     #${SHOT_ID} svg {
-      width: 100%;
-      height: 100%;
+      display: block;
+      flex: none;
     }
   `;
   // At document-start the <html> element may not exist yet.
@@ -311,12 +317,14 @@
     btn.title = 'Screenshot';
     btn.setAttribute('aria-label', 'Screenshot');
     const svg = document.createElementNS(NS, 'svg');
-    svg.setAttribute('viewBox', '0 0 36 36');
+    svg.setAttribute('viewBox', '0 0 24 24');
+    svg.setAttribute('width', '24');
+    svg.setAttribute('height', '24');
     const path = document.createElementNS(NS, 'path');
     path.setAttribute('fill', '#fff');
     path.setAttribute('d',
-      'M15 10l-1.8 2H10a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V14a2 2 0 0 0-2-2h-3.2L21 10h-6z' +
-      'm3 4.5a4.5 4.5 0 1 1 0 9 4.5 4.5 0 0 1 0-9zm0 2a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5z');
+      'M12 15.2a3.2 3.2 0 1 0 0-6.4 3.2 3.2 0 0 0 0 6.4zM9 2 7.17 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16' +
+      'c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2h-3.17L15 2H9zm3 15c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5z');
     svg.appendChild(path);
     btn.appendChild(svg);
     btn.addEventListener('click', (e) => {
@@ -324,6 +332,35 @@
       takeScreenshot();
     });
     return btn;
+  }
+
+  // YouTube's control bar layout differs between UI versions (classic bar
+  // vs. the newer rounded "pill" controls), so copy the box and icon size
+  // of a neighbouring button instead of guessing.
+  function syncShotSize() {
+    const btn = document.getElementById(SHOT_ID);
+    if (!btn || !btn.parentElement) return false;
+    const controls = btn.closest('.ytp-right-controls') || btn.parentElement;
+    const ref = ['.ytp-subtitles-button', '.ytp-settings-button', '.ytp-fullscreen-button']
+      .map((sel) => controls.querySelector(sel))
+      .find((el) => el && el.offsetWidth > 0 && el.querySelector('svg'));
+    if (!ref) return false;
+    const refSvg = ref.querySelector('svg');
+    const rb = ref.getBoundingClientRect();
+    const rs = refSvg.getBoundingClientRect();
+    const cs = getComputedStyle(ref);
+    btn.style.boxSizing = 'border-box';
+    btn.style.width = rb.width + 'px';
+    btn.style.height = rb.height + 'px';
+    btn.style.padding = '0';
+    btn.style.margin = cs.margin;
+    const svg = btn.querySelector('svg');
+    svg.style.width = rs.width + 'px';
+    svg.style.height = rs.height + 'px';
+    // Classic icons are drawn in a padded 36x36 box; newer ones fill 24x24.
+    const vb = (refSvg.getAttribute('viewBox') || '').trim().split(/\s+/);
+    svg.setAttribute('viewBox', vb[2] === '36' ? '-8 -8 40 40' : '0 0 24 24');
+    return true;
   }
 
   function insertScreenshotButton() {
@@ -338,6 +375,7 @@
     } else {
       rightControls.insertBefore(makeScreenshotButton(), rightControls.firstChild);
     }
+    retry(syncShotSize, 10, 300);
     return true;
   }
 
@@ -375,9 +413,8 @@
 
   // ------------------------------------------------------------------
   // Mini player: when the player scrolls out of view (reading comments),
-  // pin it to a corner. The × button hides it until you scroll back up.
+  // pin it to a corner with no controls; clicking it plays/pauses.
   // ------------------------------------------------------------------
-  let miniDismissed = false;
   let miniScheduled = false;
 
   function playerSlot(p) {
@@ -391,9 +428,29 @@
     return null;
   }
 
+  // A pinned element can't paint above content outside an ancestor that
+  // forms its own stacking layer (this is what made the mini player show
+  // behind the comments in narrow windows). Mark those ancestors so the
+  // CSS can raise them while the mini player is on.
+  function liftAncestors(p) {
+    for (let el = p.parentElement; el && el !== document.body; el = el.parentElement) {
+      const cs = getComputedStyle(el);
+      if (cs.zIndex !== 'auto' || cs.isolation === 'isolate' || cs.opacity !== '1' || cs.mixBlendMode !== 'normal') {
+        el.setAttribute('data-yt-focus-lift', cs.position === 'static' ? 'static' : '');
+      }
+    }
+  }
+
+  function clearLift() {
+    for (const el of document.querySelectorAll('[data-yt-focus-lift]')) el.removeAttribute('data-yt-focus-lift');
+  }
+
   function setMini(on) {
     if (document.body.classList.contains(MINI_CLASS) === on) return;
+    const p = getPlayer();
+    if (on && p) liftAncestors(p);
     document.body.classList.toggle(MINI_CLASS, on);
+    if (!on) clearLift();
     // Let the player re-measure itself for the new size.
     window.dispatchEvent(new Event('resize'));
   }
@@ -407,9 +464,8 @@
     const r = slot.getBoundingClientRect();
     const visible = r.bottom - 56; // part still showing below the top bar
     const outOfView = window.scrollY > 0 && visible < r.height * 0.12;
-    if (!outOfView) miniDismissed = false;
     const started = !p.classList.contains('unstarted-mode') && !p.classList.contains('ended-mode');
-    setMini(outOfView && started && !miniDismissed);
+    setMini(outOfView && started);
   }
 
   function scheduleMiniUpdate() {
@@ -418,22 +474,24 @@
     requestAnimationFrame(updateMiniPlayer);
   }
 
-  function insertMiniClose() {
-    if (!CONFIG.miniPlayer || document.getElementById(MINI_CLOSE_ID)) return true;
-    const p = document.querySelector('ytd-player #movie_player');
-    if (!p) return false;
-    const btn = document.createElement('button');
-    btn.id = MINI_CLOSE_ID;
-    btn.type = 'button';
-    btn.title = 'Close mini player';
-    btn.textContent = '×';
-    btn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      miniDismissed = true;
-      setMini(false);
-    });
-    p.appendChild(btn);
-    return true;
+  // In the mini player a click anywhere on the picture plays/pauses, and
+  // YouTube's own click/double-click handling (fullscreen etc.) is blocked.
+  function onMiniPointer(e) {
+    if (!document.body.classList.contains(MINI_CLASS)) return;
+    const p = getPlayer();
+    if (!p || p.classList.contains('ytp-fullscreen') || !p.contains(e.target)) return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    if (e.type !== 'click' || e.button !== 0) return;
+    const video = p.querySelector('video');
+    const playing = typeof p.getPlayerState === 'function' ? [1, 3].includes(p.getPlayerState()) : video && !video.paused;
+    if (playing) {
+      if (typeof p.pauseVideo === 'function') p.pauseVideo(); else if (video) video.pause();
+    } else if (typeof p.playVideo === 'function') {
+      p.playVideo();
+    } else if (video) {
+      video.play();
+    }
   }
 
   // ------------------------------------------------------------------
@@ -595,28 +653,30 @@
   function init() {
     retry(applyQuality, 40, 250);
     retry(insertScreenshotButton);
+    window.addEventListener('resize', () => setTimeout(syncShotSize, 100));
+    document.addEventListener('fullscreenchange', () => setTimeout(syncShotSize, 300));
     if (isEmbed) return;
 
     retry(insertButton);
     retry(enableTheaterMode);
     retry(disableAutoplay);
-    retry(insertMiniClose);
 
     document.addEventListener('yt-navigate-finish', () => {
       // Turn off focus mode when navigating to a new video/page
       setFocusMode(false);
-      miniDismissed = false;
       const existing = document.getElementById(BTN_ID);
       if (existing) existing.remove();
       retry(insertButton);
       retry(enableTheaterMode);
       retry(insertScreenshotButton);
-      retry(insertMiniClose);
-      scheduleMiniUpdate();
+        scheduleMiniUpdate();
     });
 
     window.addEventListener('scroll', scheduleMiniUpdate, { passive: true });
     window.addEventListener('resize', scheduleMiniUpdate, { passive: true });
+    for (const type of ['click', 'dblclick', 'mousedown', 'mouseup', 'pointerdown', 'pointerup']) {
+      window.addEventListener(type, onMiniPointer, true);
+    }
   }
 
   if (document.readyState === 'loading') {
@@ -630,7 +690,6 @@
     if (CONFIG.screenshotButton && !document.getElementById(SHOT_ID)) insertScreenshotButton();
     if (isEmbed || !isWatchPage()) return;
     if (!document.getElementById(BTN_ID)) insertButton();
-    if (CONFIG.miniPlayer && !document.getElementById(MINI_CLOSE_ID)) insertMiniClose();
   });
   observer.observe(document, { childList: true, subtree: true });
 })();
