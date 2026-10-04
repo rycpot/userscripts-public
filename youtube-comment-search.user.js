@@ -1,10 +1,10 @@
 // ==UserScript==
 // @name         YouTube Comment Search
 // @namespace    https://tampermonkey.net/
-// @version      2.2.2
+// @version      2.2.3
 // @description  Adds a search box to a video's comment section (Cmd+S / Ctrl+S jumps to it). Uses your own YouTube Data API key. Highlights matches, expands reply threads, makes timestamps clickable, and supports /regex/, :creator and global: (whole channel).
 // @author       you
-// @icon         https://www.youtube.com/favicon.ico
+// @icon         https://www.gstatic.com/youtube/img/branding/favicon/favicon_144x144.png
 // @match        https://www.youtube.com/*
 // @grant        GM_getValue
 // @grant        GM_setValue

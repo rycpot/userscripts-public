@@ -1,10 +1,10 @@
 // ==UserScript==
 // @name         YouTube Focus Mode + Full-Sized Theater Mode
 // @namespace    https://tampermonkey.net/
-// @version      2.3.3
+// @version      2.3.4
 // @description  Focus button that dims everything but the video, full-sized Theater mode by default, H.264 (MP4/AVC) instead of VP9/AV1, auto 1080p quality, a mini player when you scroll down to the comments, hidden related videos, a screenshot button and autoplay-next turned off.
 // @author       you
-// @icon         https://www.youtube.com/favicon.ico
+// @icon         https://www.gstatic.com/youtube/img/branding/favicon/favicon_144x144.png
 // @match        https://www.youtube.com/*
 // @match        https://www.youtube-nocookie.com/embed/*
 // @grant        none
