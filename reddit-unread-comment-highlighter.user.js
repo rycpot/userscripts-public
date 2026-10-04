@@ -1,9 +1,10 @@
 // ==UserScript==
 // @name         Reddit Unread Comment Highlighter
 // @namespace    https://example.com/reddit-unread-highlighter
-// @version      3.1.0
+// @version      3.1.1
 // @description  Highlights comments posted since your last visit to a Reddit thread. Nothing highlighted on first visit; refresh or revisit later to see new ones. Also tracks Reddit's same-page (SPA) navigation between threads.
 // @author       you
+// @icon         https://www.reddit.com/favicon.ico
 // @match        *://*.reddit.com/*
 // @grant        GM_getValue
 // @grant        GM_setValue
