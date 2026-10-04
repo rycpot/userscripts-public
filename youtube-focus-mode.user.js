@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         YouTube Focus Mode + Full-Sized Theater Mode
 // @namespace    https://tampermonkey.net/
-// @version      2.3.0
+// @version      2.3.1
 // @description  Focus button that dims everything but the video, full-sized Theater mode by default, H.264 (MP4/AVC) instead of VP9/AV1, auto 1080p quality, a mini player when you scroll down to the comments, hidden related videos, a screenshot button and autoplay-next turned off.
 // @author       you
 // @icon         https://www.youtube.com/favicon.ico
@@ -33,6 +33,7 @@
     miniPlayerMargin: 15,       // gap from the window edges, in px
     hideRelated: true,
     screenshotButton: true,
+    screenshotIconColor: '#8a8a8a', // dim grey; YouTube's own icons are about '#eee'
     disableAutoplay: true,      // turns off the "Autoplay next video" toggle
   };
 
@@ -376,19 +377,28 @@
     btn.type = 'button';
     btn.title = 'Screenshot';
     btn.setAttribute('aria-label', 'Screenshot');
-    // Outlined camera (Material "photo_camera" outline); the viewBox hugs
-    // the glyph so syncShotSize can size it to match its neighbours.
+    // Viewfinder: rounded corner brackets around a lens. The viewBox hugs
+    // the glyph (plus half the line width) so syncShotSize can size it to
+    // match its neighbours.
     const svg = document.createElementNS(NS, 'svg');
-    svg.setAttribute('viewBox', '2 2 20 18');
-    svg.setAttribute('width', '20');
+    svg.setAttribute('viewBox', '3 3 18 18');
+    svg.setAttribute('width', '18');
     svg.setAttribute('height', '18');
-    const path = document.createElementNS(NS, 'path');
-    path.setAttribute('fill', '#fff');
-    path.setAttribute('d',
-      'M20 4h-3.17L15 2H9L7.17 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 14H4V6' +
-      'h4.05l1.83-2h4.24l1.83 2H20v12zM12 7c-2.76 0-5 2.24-5 5s2.24 5 5 5 5-2.24 5-5-2.24-5-5-5zm0 8' +
-      'c-1.65 0-3-1.35-3-3s1.35-3 3-3 3 1.35 3 3-1.35 3-3 3z');
-    svg.appendChild(path);
+    const g = document.createElementNS(NS, 'g');
+    for (const [k, v] of Object.entries({
+      fill: 'none', stroke: CONFIG.screenshotIconColor, 'stroke-width': '2',
+      'stroke-linecap': 'round', 'stroke-linejoin': 'round',
+    })) g.setAttribute(k, v);
+    const corners = document.createElementNS(NS, 'path');
+    corners.setAttribute('d',
+      'M4 8.5V7a3 3 0 0 1 3-3h1.5M15.5 4H17a3 3 0 0 1 3 3v1.5' +
+      'M20 15.5V17a3 3 0 0 1-3 3h-1.5M8.5 20H7a3 3 0 0 1-3-3v-1.5');
+    const lens = document.createElementNS(NS, 'circle');
+    lens.setAttribute('cx', '12');
+    lens.setAttribute('cy', '12');
+    lens.setAttribute('r', '3');
+    g.append(corners, lens);
+    svg.appendChild(g);
     btn.appendChild(svg);
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -399,7 +409,7 @@
 
   // YouTube's control bar layout differs between UI versions (classic bar
   // vs. the newer rounded "pill" controls), so copy a neighbouring button:
-  // its box size, the size of the icon as actually drawn, and its colour.
+  // its box size and the size of the icon as actually drawn.
   function syncShotSize() {
     const btn = document.getElementById(SHOT_ID);
     if (!btn || !btn.parentElement) return false;
@@ -412,14 +422,12 @@
     // Visible glyph = union of the icon's painted shapes (skipping
     // invisible full-size padding paths).
     let glyph = null;
-    let color = null;
     for (const shape of ref.querySelectorAll('svg path, svg use, svg rect, svg circle')) {
       const st = getComputedStyle(shape);
       const paint = st.fill !== 'none' ? st.fill : st.stroke !== 'none' ? st.stroke : null;
       if (!paint || shape.closest('defs')) continue;
       const r = shape.getBoundingClientRect();
       if (!r.width || !r.height) continue;
-      if (!color && !shape.classList.contains('ytp-svg-shadow')) color = paint;
       glyph = glyph
         ? { left: Math.min(glyph.left, r.left), top: Math.min(glyph.top, r.top),
             right: Math.max(glyph.right, r.right), bottom: Math.max(glyph.bottom, r.bottom) }
@@ -436,13 +444,11 @@
     btn.style.margin = cs.margin;
     btn.style.opacity = cs.opacity;
 
-    // Camera glyph is 20x18; make it as wide as the reference glyph is tall
-    // or wide (whichever is larger), so it reads at the same weight.
+    // The viewfinder is square: match the reference glyph's larger side.
     const size = Math.max(glyph.right - glyph.left, glyph.bottom - glyph.top);
     const svg = btn.querySelector('svg');
     svg.style.width = size + 'px';
-    svg.style.height = (size * 18 / 20) + 'px';
-    if (color) svg.querySelector('path').setAttribute('fill', color);
+    svg.style.height = size + 'px';
     return true;
   }
 
