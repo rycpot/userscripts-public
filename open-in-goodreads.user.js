@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Open in Goodreads
 // @namespace    open-in-goodreads
-// @version      3.4
+// @version      3.5
 // @description  Adds a button to Amazon book pages to redirect to Goodreads page based on ASIN/ISBN
 // @match        https://*.amazon.com/*
 // @match        https://*.amazon.co.uk/*
@@ -119,9 +119,9 @@
                     margin: 10px auto;
                     display: inline-flex;
                     align-items: center;
-                    gap: 6px;
-                    height: 34px;
-                    padding: 0 16px;
+                    gap: 10px;
+                    height: 36px;
+                    padding: 0 18px;
                     background: #f4f1ea;
                     border: 1px solid #d6d0c4;
                     border-radius: 20px;
@@ -132,8 +132,10 @@
                 }
                 #open-in-goodreads-btn:hover { background: #ece6d9; border-color: #c7bfae; }
                 #open-in-goodreads-btn:active { background: #e3dccb; }
+                /* Apple's Baskerville runs small and tight, hence the size and spacing */
                 #open-in-goodreads-btn .ogr-label {
-                    font: italic 400 13px/1 Baskerville, "Libre Baskerville", "Baskerville Old Face", Georgia, serif;
+                    font: italic 400 17px/1 Baskerville, "Libre Baskerville", "Baskerville Old Face", Georgia, serif;
+                    letter-spacing: 0.02em;
                     color: #382110;
                 }
                 #open-in-goodreads-btn .ogr-wordmark { height: 18px; width: auto; display: block; }
