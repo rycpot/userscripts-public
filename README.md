@@ -28,3 +28,20 @@ Updates are automatic: your userscript manager checks this repo and installs a n
 <p>
   <img src="https://rycpot.x02.me/i/7u7pIO.png" alt="Instagram Right-Click Images" width="600">
 </p>
+
+<h2>YouTube Focus Mode + Full-Sized Theater Mode</h2>
+<p>Adds a Focus button that dims everything but the video, and opens videos in a full-sized Theater mode. Also:</p>
+<ul>
+  <li>Uses MP4/H.264 instead of WebM/VP9/AV1 (up to 1080p60)</li>
+  <li>Picks 1080p automatically for videos, playlists and embeds. You can still choose another quality from the gear menu for a single video.</li>
+  <li>Shows a 640×360 mini player in the top-right corner when you scroll down to the comments</li>
+  <li>Hides related videos</li>
+  <li>Adds a screenshot button next to the Autoplay toggle</li>
+  <li>Turns off Autoplay (next video)</li>
+</ul>
+
+<p>
+  <a href="https://raw.githubusercontent.com/rycpot/userscripts-public/main/youtube-focus-mode.user.js">
+    <img src="https://img.shields.io/badge/Install-Userscript-4CAF50?style=for-the-badge&logo=tampermonkey&logoColor=white" alt="Install YouTube Focus Mode + Full-Sized Theater Mode">
+  </a>
+</p>
