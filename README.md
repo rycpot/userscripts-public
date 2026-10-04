@@ -65,3 +65,27 @@ Updates are automatic: your userscript manager checks this repo and installs a n
 <p>
   <img src="https://imglink.cc/cdn/J1lEM1KJ2k.png" alt="Youtube+" width="600">
 </p>
+
+<h2>Google Images: Open Original</h2>
+<p>Adds an <b>Open Image</b> button to the Google Images preview panel that opens the original full-size image in a new tab. It never changes how the panel or the thumbnail grid behave.</p>
+<p>
+  <a href="https://raw.githubusercontent.com/rycpot/userscripts-public/main/google-images-open-original.user.js">
+    <img src="https://img.shields.io/badge/Install-Userscript-4CAF50?style=for-the-badge&logo=tampermonkey&logoColor=white" alt="Install Google Images: Open Original">
+  </a>
+</p>
+
+<h2>Enter = New Line (Claude, ChatGPT, Gemini, DeepSeek)</h2>
+<p>In the message box, <b>Enter</b> adds a new line and <b>Cmd/Ctrl+Enter</b> sends. Runs only on Claude, ChatGPT, Gemini and DeepSeek. If a site update ever makes Enter send instead, a small warning appears.</p>
+<p>
+  <a href="https://raw.githubusercontent.com/rycpot/userscripts-public/main/enter-new-line-ai-chats.user.js">
+    <img src="https://img.shields.io/badge/Install-Userscript-4CAF50?style=for-the-badge&logo=tampermonkey&logoColor=white" alt="Install Enter = New Line (Claude, ChatGPT, Gemini, DeepSeek)">
+  </a>
+</p>
+
+<h2>Claude Usage Monitor</h2>
+<p>Shows your Claude usage in the bottom-right corner of claude.ai: the 5-hour limit as a percentage with its reset time. Hover or click it for both the 5-hour and 7-day limits and when each resets.</p>
+<p>
+  <a href="https://raw.githubusercontent.com/rycpot/userscripts-public/main/claude-usage-monitor.user.js">
+    <img src="https://img.shields.io/badge/Install-Userscript-4CAF50?style=for-the-badge&logo=tampermonkey&logoColor=white" alt="Install Claude Usage Monitor">
+  </a>
+</p>
