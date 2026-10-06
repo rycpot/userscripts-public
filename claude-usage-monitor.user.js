@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Claude Usage Monitor
 // @namespace    claude-usage-monitor
-// @version      0.6.0
+// @version      0.6.1
 // @description  Shows Claude usage limits, and any active usage credit, in a fixed bottom-right indicator.
 // @match        https://claude.ai/*
 // @run-at       document-idle
@@ -34,45 +34,38 @@
     return new Date(Math.round(date.getTime() / 60000) * 60000);
   }
 
-  function formatResetTime(isoString, now = new Date(), locale = "en-US") {
-    if (!isoString) return "N/A";
-    const date = roundToNearestMinute(new Date(isoString));
-    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const targetDate = new Date(date.getFullYear(), date.getMonth(), date.getDate());
-    const isToday = today.getTime() === targetDate.getTime();
-    const timeStr = date.toLocaleTimeString(locale, {
-      hour: "2-digit",
-      minute: "2-digit"
-    });
-    if (isToday) return timeStr;
-    const dateStr = date.toLocaleDateString(locale, {
-      month: "short",
-      day: "numeric"
-    });
-    return `${dateStr}, ${timeStr}`;
+
+
+
+  // One date/time style everywhere: "06:08PM" today, "Oct 25 01:26PM" on
+  // another day, "Jan 3 2027 09:00AM" when the year differs from now.
+  function formatTime(date, locale) {
+    return date
+      .toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit", hour12: true })
+      .replace(/\s+/g, "");
   }
 
-  function formatCompactResetTime(isoString, locale = "en-US") {
-    if (!isoString) return "N/A";
-    const rawDate = new Date(isoString);
-    if (Number.isNaN(rawDate.getTime())) return "N/A";
-    const date = roundToNearestMinute(rawDate);
-    const timeStr = date.toLocaleTimeString(locale, {
-      hour: "numeric",
-      minute: "2-digit",
-      hour12: true
-    });
-    return timeStr.replace(/\s+/g, "");
-  }
-
-  function formatCompactExpiry(isoString, now = new Date(), locale = "en-US") {
-    if (!isoString) return "N/A";
-    const date = roundToNearestMinute(new Date(isoString));
-    if (Number.isNaN(date.getTime())) return "N/A";
-    const time = formatCompactResetTime(isoString, locale);
-    if (date.toDateString() === now.toDateString()) return time;
+  function formatDay(date, now, locale) {
     const day = date.toLocaleDateString(locale, { month: "short", day: "numeric" });
-    return `${day} ${time}`;
+    return date.getFullYear() === now.getFullYear() ? day : `${day} ${date.getFullYear()}`;
+  }
+
+  function formatWhen(isoString, now = new Date(), locale = "en-US") {
+    if (!isoString) return "N/A";
+    const raw = new Date(isoString);
+    if (Number.isNaN(raw.getTime())) return "N/A";
+    const date = roundToNearestMinute(raw);
+    const time = formatTime(date, locale);
+    if (date.toDateString() === now.toDateString()) return time;
+    return `${formatDay(date, now, locale)} ${time}`;
+  }
+
+  // "2026-10-25" is a calendar date with no time; parse it as local so it
+  // can't shift a day.
+  function formatCalendarDate(dateString, now, locale) {
+    const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(dateString || "");
+    if (!m) return null;
+    return formatDay(new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])), now, locale);
   }
 
   // src/ui/chatIndicator.js, adapted only by changing its mount point
@@ -139,10 +132,10 @@
     const pct = toPercent(fiveHour.utilization);
     const locale = navigator.language;
     const now = new Date();
-    const fiveReset = formatResetTime(fiveHour.resetsAt, now, locale);
-    const compactFiveReset = formatCompactResetTime(fiveHour.resetsAt, locale);
+    const fiveReset = formatWhen(fiveHour.resetsAt, now, locale);
+    const compactFiveReset = formatWhen(fiveHour.resetsAt, now, locale);
     const sevenPct = sevenDay ? toPercent(sevenDay.utilization) : null;
-    const sevenReset = formatResetTime(sevenDay?.resetsAt, now, locale);
+    const sevenReset = formatWhen(sevenDay?.resetsAt, now, locale);
 
     // Credits are used before the plan limits, so while one is active the
     // indicator shows it in place of the 5-hour session.
@@ -155,7 +148,7 @@
       color = getUtilizationColor(credit.utilization);
       symbol = "C";
       symbolClass = "claude-usage-reset-symbol claude-usage-credit-symbol";
-      mainTime = formatCompactExpiry(credit.expiresAt, now, locale);
+      mainTime = formatWhen(credit.expiresAt, now, locale);
       ariaLabel = `${credit.label}: ${mainPct}% used, expires ${mainTime}, click for details`;
     } else {
       mainPct = pct;
@@ -173,7 +166,7 @@
             <span>${c.label}${c.key === data.inUseCreditKey ? " (in use)" : ""}:</span><span>${toPercent(c.utilization)}% used</span>
           </div>
           <div class="claude-usage-tooltip-row">
-            <span>Expires:</span><span>${formatResetTime(c.expiresAt, now, locale)}</span>
+            <span>Expires:</span><span>${formatWhen(c.expiresAt, now, locale)}</span>
           </div>`).join("");
 
     container.innerHTML = `
@@ -198,7 +191,7 @@
           </div>
           <div class="claude-usage-tooltip-row">
             <span>Resets:</span><span>${sevenReset}</span>
-          </div>${renderBillingRow(cachedBilling, locale)}
+          </div>${renderBillingRow(cachedBilling, now, locale)}
         </div>
       </button>`;
 
@@ -329,36 +322,22 @@
   }
 
   // "2026-10-25" is a calendar date; parse it as local so it can't shift a day.
-  function formatCalendarDate(dateString, locale) {
-    const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(dateString || "");
-    if (!m) return null;
-    const date = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
-    return date.toLocaleDateString(locale, { month: "short", day: "numeric", year: "numeric" });
-  }
 
   // Full timestamp in the viewer's local time zone, e.g. "Oct 25, 2026, 1:26 PM".
-  function formatDateTime(isoString, locale) {
-    if (!isoString) return null;
-    const date = new Date(isoString);
-    if (Number.isNaN(date.getTime())) return null;
-    return date.toLocaleString(locale, {
-      month: "short",
-      day: "numeric",
-      year: "numeric",
-      hour: "numeric",
-      minute: "2-digit"
-    });
-  }
 
-  function renderBillingRow(billing, locale) {
+  function renderBillingRow(billing, now, locale) {
     if (!billing) return "";
+    const when = (iso) => {
+      const text = formatWhen(iso, now, locale);
+      return text === "N/A" ? null : text;
+    };
     let label = "Renews:";
     let date =
-      formatDateTime(billing.next_charge_at, locale) ||
-      formatCalendarDate(billing.next_charge_date, locale);
+      when(billing.next_charge_at) ||
+      formatCalendarDate(billing.next_charge_date, now, locale);
     if (!date && billing.plan_ending_at) {
       label = "Plan ends:";
-      date = formatDateTime(billing.plan_ending_at, locale);
+      date = when(billing.plan_ending_at);
     }
     if (!date) return "";
     return `
@@ -546,7 +525,7 @@
 
       #${CONTAINER_ID} .claude-usage-credit-symbol {
         color: #93c5fd;
-        font-size: 11px;
+        font-size: 12px;
         font-weight: 700;
         margin-right: 2px;
       }
