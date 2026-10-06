@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Claude Usage Monitor
 // @namespace    claude-usage-monitor
-// @version      0.5.1
+// @version      0.5.2
 // @description  Shows Claude usage limits, and any active usage credit, in a fixed bottom-right indicator.
 // @match        https://claude.ai/*
 // @run-at       document-idle
@@ -152,7 +152,7 @@
     if (credit) {
       mainPct = toPercent(credit.utilization);
       color = getUtilizationColor(credit.utilization);
-      symbol = "◆";
+      symbol = "C";
       symbolClass = "claude-usage-reset-symbol claude-usage-credit-symbol";
       mainTime = formatCompactExpiry(credit.expiresAt, now, locale);
       ariaLabel = `${credit.label}: ${mainPct}% used, expires ${mainTime}, click for details`;
@@ -477,6 +477,9 @@
 
       #${CONTAINER_ID} .claude-usage-credit-symbol {
         color: #93c5fd;
+        font-size: 11px;
+        font-weight: 700;
+        margin-right: 2px;
       }
 
       #${CONTAINER_ID} .claude-usage-reset-time {
