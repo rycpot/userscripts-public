@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Claude Usage Monitor
 // @namespace    claude-usage-monitor
-// @version      0.5.2
+// @version      0.5.3
 // @description  Shows Claude usage limits, and any active usage credit, in a fixed bottom-right indicator.
 // @match        https://claude.ai/*
 // @run-at       document-idle
@@ -69,9 +69,10 @@
     if (!isoString) return "N/A";
     const date = roundToNearestMinute(new Date(isoString));
     if (Number.isNaN(date.getTime())) return "N/A";
-    const sameDay = date.toDateString() === now.toDateString();
-    if (sameDay) return formatCompactResetTime(isoString, locale);
-    return date.toLocaleDateString(locale, { month: "short", day: "numeric" });
+    const time = formatCompactResetTime(isoString, locale);
+    if (date.toDateString() === now.toDateString()) return time;
+    const day = date.toLocaleDateString(locale, { month: "short", day: "numeric" });
+    return `${day} ${time}`;
   }
 
   // src/ui/chatIndicator.js, adapted only by changing its mount point
