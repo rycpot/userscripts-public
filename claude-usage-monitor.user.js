@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Claude Usage Monitor
 // @namespace    claude-usage-monitor
-// @version      0.5.3
+// @version      0.6.0
 // @description  Shows Claude usage limits, and any active usage credit, in a fixed bottom-right indicator.
 // @match        https://claude.ai/*
 // @run-at       document-idle
@@ -198,7 +198,7 @@
           </div>
           <div class="claude-usage-tooltip-row">
             <span>Resets:</span><span>${sevenReset}</span>
-          </div>
+          </div>${renderBillingRow(cachedBilling, locale)}
         </div>
       </button>`;
 
@@ -317,6 +317,56 @@
   }
 
   // src/background/usageApi.js
+  // Plan renewal date, from the same data claude.ai's Settings > Billing uses.
+  async function fetchSubscriptionDetails(orgUuid) {
+    const url = `https://claude.ai/api/organizations/${orgUuid}/subscription_details`;
+    const response = await fetch(url, {
+      credentials: "include",
+      headers: { Accept: "application/json" }
+    });
+    if (!response.ok) throw new Error(`API ${response.status}`);
+    return response.json();
+  }
+
+  // "2026-10-25" is a calendar date; parse it as local so it can't shift a day.
+  function formatCalendarDate(dateString, locale) {
+    const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(dateString || "");
+    if (!m) return null;
+    const date = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+    return date.toLocaleDateString(locale, { month: "short", day: "numeric", year: "numeric" });
+  }
+
+  // Full timestamp in the viewer's local time zone, e.g. "Oct 25, 2026, 1:26 PM".
+  function formatDateTime(isoString, locale) {
+    if (!isoString) return null;
+    const date = new Date(isoString);
+    if (Number.isNaN(date.getTime())) return null;
+    return date.toLocaleString(locale, {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+      hour: "numeric",
+      minute: "2-digit"
+    });
+  }
+
+  function renderBillingRow(billing, locale) {
+    if (!billing) return "";
+    let label = "Renews:";
+    let date =
+      formatDateTime(billing.next_charge_at, locale) ||
+      formatCalendarDate(billing.next_charge_date, locale);
+    if (!date && billing.plan_ending_at) {
+      label = "Plan ends:";
+      date = formatDateTime(billing.plan_ending_at, locale);
+    }
+    if (!date) return "";
+    return `
+          <div class="claude-usage-tooltip-row claude-usage-tooltip-billing">
+            <span>${label}</span><span>${date}</span>
+          </div>`;
+  }
+
   async function fetchUsage(orgUuid) {
     const url = `https://claude.ai/api/organizations/${orgUuid}/usage`;
     const response = await fetch(url, {
@@ -336,6 +386,22 @@
   }
 
   let cachedData = null;
+  let cachedBilling = null;
+  let billingFetchedAt = 0;
+  const BILLING_REFRESH_MS = 60 * 60 * 1000;
+
+  // Best-effort: if this fails the tooltip just leaves out the renewal row.
+  async function refreshBilling(orgUuid) {
+    if (Date.now() - billingFetchedAt < BILLING_REFRESH_MS) return;
+    billingFetchedAt = Date.now();
+    try {
+      cachedBilling = await fetchSubscriptionDetails(orgUuid);
+      if (cachedData) renderIndicator(cachedData);
+    } catch {
+      // Try again sooner than the full hour.
+      billingFetchedAt = Date.now() - BILLING_REFRESH_MS + 5 * 60 * 1000;
+    }
+  }
   let hasSucceededOnce = false;
   let retryTimeoutId = null;
   let retryAttempt = 0;
@@ -379,6 +445,8 @@
       scheduleStartupRetry();
       return;
     }
+
+    refreshBilling(orgUuid);
 
     try {
       const data = normalizeUsageData(await fetchUsage(orgUuid));
@@ -547,6 +615,12 @@
         justify-content: space-between;
         padding: 2px 0;
         gap: 12px;
+      }
+
+      #${CONTAINER_ID} .claude-usage-tooltip-billing {
+        border-top: 1px solid hsl(var(--text-100) / 0.15);
+        margin-top: 6px;
+        padding-top: 6px;
       }
 
       #${CONTAINER_ID} .claude-usage-tooltip-row span:first-child {
