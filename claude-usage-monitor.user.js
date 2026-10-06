@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Claude Usage Monitor
 // @namespace    claude-usage-monitor
-// @version      0.3.0
-// @description  Shows Claude usage limits in a fixed bottom-right indicator.
+// @version      0.4.0
+// @description  Shows Claude usage limits, and any active usage credit, in a fixed bottom-right indicator.
 // @match        https://claude.ai/*
 // @run-at       document-idle
 // @grant        none
@@ -58,6 +58,15 @@
       hour12: true
     });
     return timeStr.replace(/\s+/g, "");
+  }
+
+  function formatCompactExpiry(isoString, now = new Date(), locale = "en-US") {
+    if (!isoString) return "N/A";
+    const date = roundToNearestMinute(new Date(isoString));
+    if (Number.isNaN(date.getTime())) return "N/A";
+    const sameDay = date.toDateString() === now.toDateString();
+    if (sameDay) return formatCompactResetTime(isoString, locale);
+    return date.toLocaleDateString(locale, { month: "short", day: "numeric" });
   }
 
   // src/ui/chatIndicator.js, adapted only by changing its mount point
@@ -121,30 +130,57 @@
     }
 
     const { fiveHour, sevenDay } = data;
-    const color = getUtilizationColor(fiveHour.utilization);
     const pct = Math.round(fiveHour.utilization);
     const locale = navigator.language;
     const now = new Date();
     const fiveReset = formatResetTime(fiveHour.resetsAt, now, locale);
     const compactFiveReset = formatCompactResetTime(fiveHour.resetsAt, locale);
-    const resetSymbol = pct >= 100 ? "▶" : "■";
-    const resetSymbolClass = pct >= 100
-      ? "claude-usage-reset-symbol claude-usage-reset-symbol-green"
-      : "claude-usage-reset-symbol claude-usage-reset-symbol-red";
     const sevenPct = sevenDay ? Math.round(sevenDay.utilization) : null;
     const sevenReset = formatResetTime(sevenDay?.resetsAt, now, locale);
+
+    // Credits are used before the plan limits, so while one is active the
+    // indicator shows it in place of the 5-hour session.
+    const credits = getActiveCredits(data.credits, now);
+    const credit = credits[0];
+
+    let color, mainPct, symbol, symbolClass, mainTime, ariaLabel;
+    if (credit) {
+      mainPct = Math.round(credit.utilization);
+      color = getUtilizationColor(credit.utilization);
+      symbol = "◆";
+      symbolClass = "claude-usage-reset-symbol claude-usage-credit-symbol";
+      mainTime = formatCompactExpiry(credit.expiresAt, now, locale);
+      ariaLabel = `${credit.label}: ${mainPct}% used, expires ${mainTime}, click for details`;
+    } else {
+      mainPct = pct;
+      color = getUtilizationColor(fiveHour.utilization);
+      symbol = pct >= 100 ? "▶" : "■";
+      symbolClass = pct >= 100
+        ? "claude-usage-reset-symbol claude-usage-reset-symbol-green"
+        : "claude-usage-reset-symbol claude-usage-reset-symbol-red";
+      mainTime = compactFiveReset;
+      ariaLabel = `Usage: ${pct}%, resets at ${compactFiveReset}, click for details`;
+    }
+
+    const creditRows = credits.map((c) => `
+          <div class="claude-usage-tooltip-row">
+            <span>${c.label}:</span><span>${Math.round(c.utilization)}% used</span>
+          </div>
+          <div class="claude-usage-tooltip-row">
+            <span>Expires:</span><span>${formatResetTime(c.expiresAt, now, locale)}</span>
+          </div>`).join("");
 
     container.innerHTML = `
       <button type="button"
         class="claude-usage-indicator inline-flex items-center gap-1 relative select-none cursor-pointer rounded-lg transition duration-300 hover:!bg-bg-200"
         aria-describedby="${TOOLTIP_ID}"
         aria-expanded="false"
-        aria-label="Usage: ${pct}%, resets at ${compactFiveReset}, click for details">
+        aria-label="${ariaLabel}">
         <span class="claude-usage-dot" style="background-color: ${color};"></span>
-        <span class="claude-usage-percent">${pct}%</span>
-        <span class="${resetSymbolClass}">${resetSymbol}</span><span class="claude-usage-reset-time">${compactFiveReset}</span>
+        <span class="claude-usage-percent">${mainPct}%</span>
+        <span class="${symbolClass}">${symbol}</span><span class="claude-usage-reset-time">${mainTime}</span>
         <div class="claude-usage-tooltip" role="tooltip" id="${TOOLTIP_ID}">
-          <div class="claude-usage-tooltip-title">Usage Limits</div>
+          <div class="claude-usage-tooltip-title">Usage Limits</div>${creditRows}
           <div class="claude-usage-tooltip-row">
             <span>5-hour:</span><span>${pct}% used</span>
           </div>
@@ -164,6 +200,56 @@
   }
 
   // src/logic/usageData.js
+  // The usage API reports dollar credits under internal codenames that can
+  // change, so credits are found by shape (an entry with a dollar limit).
+  // Known codenames only get a friendlier label.
+  const CREDIT_LABELS = {
+    harbor_lantern: "Setup credit",
+    iguana_necktie: "Cloud credit"
+  };
+
+  // Round expiry down (not to nearest) so it never shows later than the real
+  // expiry; this also matches the time on claude.ai's Settings > Usage page.
+  function floorToMinute(isoString) {
+    if (!isoString) return null;
+    const t = new Date(isoString).getTime();
+    if (Number.isNaN(t)) return null;
+    return new Date(Math.floor(t / 60000) * 60000).toISOString();
+  }
+
+  function extractCredits(raw) {
+    const credits = [];
+    for (const [key, value] of Object.entries(raw || {})) {
+      if (
+        value &&
+        typeof value === "object" &&
+        typeof value.utilization === "number" &&
+        typeof value.limit_dollars === "number" &&
+        value.limit_dollars > 0
+      ) {
+        credits.push({
+          key,
+          label: CREDIT_LABELS[key] || "Credit",
+          utilization: value.utilization,
+          expiresAt: floorToMinute(value.resets_at)
+        });
+      }
+    }
+    return credits;
+  }
+
+  // Credits that still have balance and haven't expired, soonest expiry first.
+  function getActiveCredits(credits, now = new Date()) {
+    return (credits || [])
+      .filter((c) => c.utilization < 100)
+      .filter((c) => !c.expiresAt || new Date(c.expiresAt) > now)
+      .sort((a, b) => {
+        const ta = a.expiresAt ? new Date(a.expiresAt).getTime() : Infinity;
+        const tb = b.expiresAt ? new Date(b.expiresAt).getTime() : Infinity;
+        return ta - tb;
+      });
+  }
+
   function normalizeUsageData(raw) {
     return {
       fiveHour: {
@@ -174,6 +260,7 @@
         utilization: raw.seven_day?.utilization ?? 0,
         resetsAt: raw.seven_day?.resets_at ?? null
       },
+      credits: extractCredits(raw),
       fetchedAt: new Date().toISOString(),
       error: null
     };
@@ -336,6 +423,10 @@
 
       #${CONTAINER_ID} .claude-usage-reset-symbol-red {
         color: #fca5a5;
+      }
+
+      #${CONTAINER_ID} .claude-usage-credit-symbol {
+        color: #93c5fd;
       }
 
       #${CONTAINER_ID} .claude-usage-reset-time {
