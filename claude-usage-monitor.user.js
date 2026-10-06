@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Claude Usage Monitor
 // @namespace    claude-usage-monitor
-// @version      0.5.0
+// @version      0.5.1
 // @description  Shows Claude usage limits, and any active usage credit, in a fixed bottom-right indicator.
 // @match        https://claude.ai/*
 // @run-at       document-idle
@@ -22,6 +22,11 @@
     if (percent < 50) return "hsl(var(--success-100))";
     if (percent < 80) return "hsl(var(--warning-100))";
     return "hsl(var(--danger-100))";
+  }
+
+  // Round down, like claude.ai's Settings > Usage page (79.7 shows as 79%).
+  function toPercent(utilization) {
+    return Math.floor(utilization);
   }
 
   // src/logic/timeFormat.js
@@ -130,12 +135,12 @@
     }
 
     const { fiveHour, sevenDay } = data;
-    const pct = Math.round(fiveHour.utilization);
+    const pct = toPercent(fiveHour.utilization);
     const locale = navigator.language;
     const now = new Date();
     const fiveReset = formatResetTime(fiveHour.resetsAt, now, locale);
     const compactFiveReset = formatCompactResetTime(fiveHour.resetsAt, locale);
-    const sevenPct = sevenDay ? Math.round(sevenDay.utilization) : null;
+    const sevenPct = sevenDay ? toPercent(sevenDay.utilization) : null;
     const sevenReset = formatResetTime(sevenDay?.resetsAt, now, locale);
 
     // Credits are used before the plan limits, so while one is active the
@@ -145,7 +150,7 @@
 
     let color, mainPct, symbol, symbolClass, mainTime, ariaLabel;
     if (credit) {
-      mainPct = Math.round(credit.utilization);
+      mainPct = toPercent(credit.utilization);
       color = getUtilizationColor(credit.utilization);
       symbol = "◆";
       symbolClass = "claude-usage-reset-symbol claude-usage-credit-symbol";
@@ -164,7 +169,7 @@
 
     const creditRows = credits.map((c) => `
           <div class="claude-usage-tooltip-row">
-            <span>${c.label}${c.key === data.inUseCreditKey ? " (in use)" : ""}:</span><span>${Math.round(c.utilization)}% used</span>
+            <span>${c.label}${c.key === data.inUseCreditKey ? " (in use)" : ""}:</span><span>${toPercent(c.utilization)}% used</span>
           </div>
           <div class="claude-usage-tooltip-row">
             <span>Expires:</span><span>${formatResetTime(c.expiresAt, now, locale)}</span>
