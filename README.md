@@ -100,7 +100,7 @@ Updates are automatic: your userscript manager checks this repo and installs a n
 </p>
 
 <h2>WebStore Full-Size Screenshots</h2>
-<p>Click a screenshot on a Chrome Web Store extension page to see it at full resolution, and use the left/right buttons or arrow keys to move between screenshots.</p>
+<p>On a Chrome Web Store extension page, click an image to see the extension's gallery images in full uploaded resolution, and use the left/right buttons or arrow keys to move between them.</p>
 
 This one is a bookmarklet, not a userscript, so there's no Install button. To add it:
 
@@ -108,4 +108,4 @@ This one is a bookmarklet, not a userscript, so there's no Install button. To ad
 2. In Chrome, open the bookmark manager (`Ctrl+Shift+O`, or `Cmd+Option+B` on Mac), click the **⋮** menu at the top right, and choose **Import bookmarks**.
 3. Pick the saved file. The bookmark appears in an "Imported" folder; drag it to your bookmarks bar.
 
-To use it, open an extension's page on the Chrome Web Store, click the bookmark once, then click any screenshot. Press `Esc` or click outside the image to close it.
+To use it, open an extension's page on the Chrome Web Store, click the bookmark once, then click any gallery image. Press `Esc` or click outside the image to close it.
