@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Claude Usage Monitor
 // @namespace    claude-usage-monitor
-// @version      0.5.0
+// @version      0.5.3
 // @description  Shows Claude usage limits, and any active usage credit, in a fixed bottom-right indicator.
 // @match        https://claude.ai/*
 // @run-at       document-idle
@@ -22,6 +22,11 @@
     if (percent < 50) return "hsl(var(--success-100))";
     if (percent < 80) return "hsl(var(--warning-100))";
     return "hsl(var(--danger-100))";
+  }
+
+  // Round down, like claude.ai's Settings > Usage page (79.7 shows as 79%).
+  function toPercent(utilization) {
+    return Math.floor(utilization);
   }
 
   // src/logic/timeFormat.js
@@ -64,9 +69,10 @@
     if (!isoString) return "N/A";
     const date = roundToNearestMinute(new Date(isoString));
     if (Number.isNaN(date.getTime())) return "N/A";
-    const sameDay = date.toDateString() === now.toDateString();
-    if (sameDay) return formatCompactResetTime(isoString, locale);
-    return date.toLocaleDateString(locale, { month: "short", day: "numeric" });
+    const time = formatCompactResetTime(isoString, locale);
+    if (date.toDateString() === now.toDateString()) return time;
+    const day = date.toLocaleDateString(locale, { month: "short", day: "numeric" });
+    return `${day} ${time}`;
   }
 
   // src/ui/chatIndicator.js, adapted only by changing its mount point
@@ -130,12 +136,12 @@
     }
 
     const { fiveHour, sevenDay } = data;
-    const pct = Math.round(fiveHour.utilization);
+    const pct = toPercent(fiveHour.utilization);
     const locale = navigator.language;
     const now = new Date();
     const fiveReset = formatResetTime(fiveHour.resetsAt, now, locale);
     const compactFiveReset = formatCompactResetTime(fiveHour.resetsAt, locale);
-    const sevenPct = sevenDay ? Math.round(sevenDay.utilization) : null;
+    const sevenPct = sevenDay ? toPercent(sevenDay.utilization) : null;
     const sevenReset = formatResetTime(sevenDay?.resetsAt, now, locale);
 
     // Credits are used before the plan limits, so while one is active the
@@ -145,9 +151,9 @@
 
     let color, mainPct, symbol, symbolClass, mainTime, ariaLabel;
     if (credit) {
-      mainPct = Math.round(credit.utilization);
+      mainPct = toPercent(credit.utilization);
       color = getUtilizationColor(credit.utilization);
-      symbol = "◆";
+      symbol = "C";
       symbolClass = "claude-usage-reset-symbol claude-usage-credit-symbol";
       mainTime = formatCompactExpiry(credit.expiresAt, now, locale);
       ariaLabel = `${credit.label}: ${mainPct}% used, expires ${mainTime}, click for details`;
@@ -164,7 +170,7 @@
 
     const creditRows = credits.map((c) => `
           <div class="claude-usage-tooltip-row">
-            <span>${c.label}${c.key === data.inUseCreditKey ? " (in use)" : ""}:</span><span>${Math.round(c.utilization)}% used</span>
+            <span>${c.label}${c.key === data.inUseCreditKey ? " (in use)" : ""}:</span><span>${toPercent(c.utilization)}% used</span>
           </div>
           <div class="claude-usage-tooltip-row">
             <span>Expires:</span><span>${formatResetTime(c.expiresAt, now, locale)}</span>
@@ -472,6 +478,9 @@
 
       #${CONTAINER_ID} .claude-usage-credit-symbol {
         color: #93c5fd;
+        font-size: 11px;
+        font-weight: 700;
+        margin-right: 2px;
       }
 
       #${CONTAINER_ID} .claude-usage-reset-time {
