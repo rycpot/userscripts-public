@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Claude Usage Monitor
 // @namespace    claude-usage-monitor
-// @version      0.4.0
+// @version      0.5.0
 // @description  Shows Claude usage limits, and any active usage credit, in a fixed bottom-right indicator.
 // @match        https://claude.ai/*
 // @run-at       document-idle
@@ -140,7 +140,7 @@
 
     // Credits are used before the plan limits, so while one is active the
     // indicator shows it in place of the 5-hour session.
-    const credits = getActiveCredits(data.credits, now);
+    const credits = getActiveCredits(data.credits, now, data.inUseCreditKey);
     const credit = credits[0];
 
     let color, mainPct, symbol, symbolClass, mainTime, ariaLabel;
@@ -164,7 +164,7 @@
 
     const creditRows = credits.map((c) => `
           <div class="claude-usage-tooltip-row">
-            <span>${c.label}:</span><span>${Math.round(c.utilization)}% used</span>
+            <span>${c.label}${c.key === data.inUseCreditKey ? " (in use)" : ""}:</span><span>${Math.round(c.utilization)}% used</span>
           </div>
           <div class="claude-usage-tooltip-row">
             <span>Expires:</span><span>${formatResetTime(c.expiresAt, now, locale)}</span>
@@ -231,6 +231,7 @@
           key,
           label: CREDIT_LABELS[key] || "Credit",
           utilization: value.utilization,
+          usedDollars: typeof value.used_dollars === "number" ? value.used_dollars : null,
           expiresAt: floorToMinute(value.resets_at)
         });
       }
@@ -238,16 +239,59 @@
     return credits;
   }
 
-  // Credits that still have balance and haven't expired, soonest expiry first.
-  function getActiveCredits(credits, now = new Date()) {
+  // Credits that still have balance and haven't expired. The credit last seen
+  // in use comes first; otherwise the soonest expiry.
+  function getActiveCredits(credits, now = new Date(), inUseKey = null) {
     return (credits || [])
       .filter((c) => c.utilization < 100)
       .filter((c) => !c.expiresAt || new Date(c.expiresAt) > now)
       .sort((a, b) => {
+        if (a.key === inUseKey) return -1;
+        if (b.key === inUseKey) return 1;
         const ta = a.expiresAt ? new Date(a.expiresAt).getTime() : Infinity;
         const tb = b.expiresAt ? new Date(b.expiresAt).getTime() : Infinity;
         return ta - tb;
       });
+  }
+
+  // The API doesn't say which credit is drawn from first, so infer it: the
+  // credit whose used amount went up since the last fetch is the one in use.
+  // Remembered across reloads in localStorage.
+  const CREDIT_STATE_KEY = "claude-usage-monitor:credit-state";
+
+  function loadCreditState() {
+    try {
+      const state = JSON.parse(localStorage.getItem(CREDIT_STATE_KEY));
+      if (state && typeof state === "object") return state;
+    } catch {}
+    return { used: {}, inUseKey: null };
+  }
+
+  function saveCreditState(state) {
+    try {
+      localStorage.setItem(CREDIT_STATE_KEY, JSON.stringify(state));
+    } catch {}
+  }
+
+  function updateInUseCredit(credits) {
+    const state = loadCreditState();
+    const prevUsed = state.used || {};
+    let bestKey = null;
+    let bestIncrease = 0;
+    const used = {};
+    for (const c of credits) {
+      if (c.usedDollars === null) continue;
+      used[c.key] = c.usedDollars;
+      const prev = prevUsed[c.key];
+      const increase = typeof prev === "number" ? c.usedDollars - prev : 0;
+      if (increase > 0.0001 && increase > bestIncrease) {
+        bestIncrease = increase;
+        bestKey = c.key;
+      }
+    }
+    const inUseKey = bestKey ?? state.inUseKey ?? null;
+    saveCreditState({ used, inUseKey });
+    return inUseKey;
   }
 
   function normalizeUsageData(raw) {
@@ -332,6 +376,7 @@
 
     try {
       const data = normalizeUsageData(await fetchUsage(orgUuid));
+      data.inUseCreditKey = updateInUseCredit(data.credits);
       cachedData = data;
       hasSucceededOnce = true;
       clearRetryTimeout();
