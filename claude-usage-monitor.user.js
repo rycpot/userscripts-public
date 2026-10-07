@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Claude Usage Monitor
 // @namespace    claude-usage-monitor
-// @version      0.9.1
+// @version      0.9.2
 // @description  Shows Claude usage limits, and any active usage credit, in a fixed bottom-right indicator.
 // @match        https://claude.ai/*
 // @run-at       document-idle
@@ -537,12 +537,32 @@
   // until both are ready; pages with no title bar show the fallback spot
   // after a short wait.
   const FALLBACK_DELAY_MS = 2500;
+  // Safety net in case the title bar markup changes and is never found.
+  const CODE_FALLBACK_DELAY_MS = 15000;
   const startedAt = Date.now();
-  let fontsReady = !document.fonts;
-  document.fonts?.ready.then(() => {
-    fontsReady = true;
-    updatePosition();
-  });
+
+  // Claude Code pages always get a title bar, but a full reload can take a
+  // few seconds to build it, so wait much longer before the fallback spot.
+  function fallbackDelay() {
+    return location.pathname.startsWith("/code") ? CODE_FALLBACK_DELAY_MS : FALLBACK_DELAY_MS;
+  }
+
+  // fonts.ready resolves as soon as nothing is downloading, which on a fresh
+  // load can be before the title bar has even asked for its font. So check
+  // the title bar's own font instead.
+  function titlebarFontLoaded(icons) {
+    if (!document.fonts) return true;
+    const sample = icons.querySelector("button") || icons;
+    const style = getComputedStyle(sample);
+    try {
+      return document.fonts.check(`${style.fontSize} ${style.fontFamily}`) && document.fonts.status === "loaded";
+    } catch {
+      return true;
+    }
+  }
+
+  // Re-measure the moment a font finishes loading.
+  document.fonts?.addEventListener?.("loadingdone", () => updatePosition());
 
   function setVisible(container, visible) {
     container.style.visibility = visible ? "" : "hidden";
@@ -555,10 +575,10 @@
     const titlebar = findTitlebar();
     if (titlebar) {
       dockInTitlebar(container, titlebar);
-      setVisible(container, fontsReady);
+      setVisible(container, titlebarFontLoaded(titlebar.icons));
       return;
     }
-    if (Date.now() - startedAt < FALLBACK_DELAY_MS) {
+    if (Date.now() - startedAt < fallbackDelay()) {
       setVisible(container, false);
       return;
     }
