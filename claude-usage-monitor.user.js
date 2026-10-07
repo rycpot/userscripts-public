@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Claude Usage Monitor
 // @namespace    claude-usage-monitor
-// @version      0.9.3
+// @version      0.9.4
 // @description  Shows Claude usage limits, and any active usage credit, in a fixed bottom-right indicator.
 // @match        https://claude.ai/*
 // @run-at       document-idle
@@ -84,9 +84,22 @@
     const indicator = containerEl.querySelector(".claude-usage-indicator");
     if (!indicator) return;
 
+    // Line the tooltip's right edge up with the window edge (minus the same
+    // inset the title bar uses), keeping the arrow centred on the indicator.
+    const TOOLTIP_EDGE_GAP = 12;
+    const positionTooltip = (tooltip) => {
+      const r = indicator.getBoundingClientRect();
+      const shift = Math.max(0, window.innerWidth - TOOLTIP_EDGE_GAP - r.right);
+      tooltip.style.right = `${-shift}px`;
+      tooltip.style.setProperty("--claude-usage-arrow-right", `${Math.max(6, shift + r.width / 2 - 6)}px`);
+    };
+
     const showTooltip = () => {
       const tooltip = containerEl.querySelector(".claude-usage-tooltip");
-      if (tooltip) tooltip.style.display = "block";
+      if (tooltip) {
+        tooltip.style.display = "block";
+        positionTooltip(tooltip);
+      }
       indicator.setAttribute("aria-expanded", "true");
     };
 
@@ -172,8 +185,11 @@
       ariaLabel = `Usage: ${pct}%, resets at ${compactFiveReset}, click for details`;
     }
 
-    const creditRows = credits.map((c) => `
-          <div class="claude-usage-tooltip-row">
+    // A line separates each group: every credit, the 5-hour and the 7-day
+    // limit (and the renewal row, styled the same way).
+    const GROUP = "claude-usage-tooltip-row claude-usage-tooltip-group";
+    const creditRows = credits.map((c, i) => `
+          <div class="${i === 0 ? "claude-usage-tooltip-row" : GROUP}">
             <span>${c.label}${c.key === data.inUseCreditKey ? " (in use)" : ""}:</span><span>${toPercent(c.utilization)}% used</span>
           </div>
           <div class="claude-usage-tooltip-row">
@@ -191,13 +207,13 @@
         <span class="${symbolClass}">${symbol}</span><span class="claude-usage-reset-time">${mainTime}</span>
         <div class="claude-usage-tooltip" role="tooltip" id="${TOOLTIP_ID}">
           <div class="claude-usage-tooltip-title">Usage Limits</div>${creditRows}
-          <div class="claude-usage-tooltip-row">
+          <div class="${credits.length ? GROUP : "claude-usage-tooltip-row"}">
             <span>5-hour:</span><span>${pct}% used</span>
           </div>
           <div class="claude-usage-tooltip-row">
             <span>Resets:</span><span>${fiveReset}</span>
           </div>
-          <div class="claude-usage-tooltip-row">
+          <div class="${GROUP}">
             <span>7-day:</span><span>${sevenPct ?? "N/A"}% used</span>
           </div>
           <div class="claude-usage-tooltip-row">
@@ -521,6 +537,11 @@
 
   function dockInTitlebar(container, { bar, icons }) {
     if (container.parentElement !== bar || container.nextElementSibling !== icons) {
+      // Moving after it's been shown (e.g. a loading-stage title bar was
+      // replaced by the real one): hide and settle again rather than jump.
+      debugLog("docking into title bar", icons.getBoundingClientRect());
+      setVisible(container, false);
+      stableSignature = null;
       bar.insertBefore(container, icons);
     }
     if (dockedIcons !== icons) {
@@ -622,7 +643,40 @@
   document.fonts?.addEventListener?.("loadingdone", () => updatePosition());
 
   function setVisible(container, visible) {
+    if (visible && container.style.visibility === "hidden") debugLog("revealed", container.getBoundingClientRect());
     container.style.visibility = visible ? "" : "hidden";
+  }
+
+  // Opt-in placement log: run
+  //   localStorage.setItem("claude-usage-monitor:debug", "1")
+  // in the console on claude.ai and reload; removeItem to turn it off.
+  function debugEnabled() {
+    try {
+      return localStorage.getItem("claude-usage-monitor:debug") === "1";
+    } catch {
+      return false;
+    }
+  }
+
+  function debugLog(...args) {
+    if (!debugEnabled()) return;
+    const describe = (a) =>
+      a && typeof a.left === "number"
+        ? `left=${Math.round(a.left)} top=${Math.round(a.top)} width=${Math.round(a.width)}`
+        : a;
+    console.log(`[claude-usage-monitor +${Date.now() - startedAt}ms]`, ...args.map(describe));
+  }
+
+  // Debug only: log any movement after it's been revealed.
+  let lastLoggedRect = "";
+  function debugLogMovement(container) {
+    if (!debugEnabled() || container.style.visibility === "hidden") return;
+    const r = container.getBoundingClientRect();
+    const key = `${Math.round(r.left)},${Math.round(r.top)}`;
+    if (key !== lastLoggedRect) {
+      if (lastLoggedRect) debugLog("moved while visible", r, location.pathname);
+      lastLoggedRect = key;
+    }
   }
 
   function updatePosition() {
@@ -633,14 +687,17 @@
     if (titlebar) {
       dockInTitlebar(container, titlebar);
       revealWhenSettled(container, titlebar.icons);
+      debugLogMovement(container);
       return;
     }
     if (Date.now() - startedAt < fallbackDelay()) {
       setVisible(container, false);
       return;
     }
-    setVisible(container, true);
+    if (container.parentElement !== document.body) debugLog("no title bar found, using fallback spot");
     undock(container);
+    setVisible(container, true);
+    debugLogMovement(container);
     const headerBottom = findHeaderBottom();
     setPx(container, "top", headerBottom === null ? DEFAULT_TOP : headerBottom + 8);
     setPx(container, "bottom", null);
@@ -817,7 +874,7 @@
         content: '';
         position: absolute;
         top: 100%;
-        right: 0;
+        right: var(--claude-usage-arrow-right, 0px);
         left: auto;
         transform: none;
         width: 0;
@@ -863,6 +920,7 @@
         gap: 12px;
       }
 
+      #${CONTAINER_ID} .claude-usage-tooltip-group,
       #${CONTAINER_ID} .claude-usage-tooltip-billing {
         border-top: 1px solid hsl(var(--text-100) / 0.15);
         margin-top: 6px;
