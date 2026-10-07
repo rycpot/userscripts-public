@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Claude Usage Monitor
 // @namespace    claude-usage-monitor
-// @version      0.9.4
+// @version      0.9.5
 // @description  Shows Claude usage limits, and any active usage credit, in a fixed bottom-right indicator.
 // @match        https://claude.ai/*
 // @run-at       document-idle
@@ -84,14 +84,20 @@
     const indicator = containerEl.querySelector(".claude-usage-indicator");
     if (!indicator) return;
 
-    // Line the tooltip's right edge up with the window edge (minus the same
-    // inset the title bar uses), keeping the arrow centred on the indicator.
+    // Centre the tooltip under the indicator, but keep it at least 12px (the
+    // title bar's own inset) inside the window; the arrow always points at
+    // the indicator's centre.
     const TOOLTIP_EDGE_GAP = 12;
     const positionTooltip = (tooltip) => {
       const r = indicator.getBoundingClientRect();
-      const shift = Math.max(0, window.innerWidth - TOOLTIP_EDGE_GAP - r.right);
-      tooltip.style.right = `${-shift}px`;
-      tooltip.style.setProperty("--claude-usage-arrow-right", `${Math.max(6, shift + r.width / 2 - 6)}px`);
+      const centre = r.left + r.width / 2;
+      const width = tooltip.offsetWidth;
+      let right = centre + width / 2;
+      right = Math.min(right, window.innerWidth - TOOLTIP_EDGE_GAP);
+      right = Math.max(right, TOOLTIP_EDGE_GAP + width);
+      const base = (tooltip.offsetParent || indicator).getBoundingClientRect();
+      tooltip.style.right = `${base.right - right}px`;
+      tooltip.style.setProperty("--claude-usage-arrow-right", `${Math.max(6, right - centre - 6)}px`);
     };
 
     const showTooltip = () => {
