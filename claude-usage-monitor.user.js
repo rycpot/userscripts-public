@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Claude Usage Monitor
 // @namespace    claude-usage-monitor
-// @version      0.8.1
+// @version      0.9.0
 // @description  Shows Claude usage limits, and any active usage credit, in a fixed bottom-right indicator.
 // @match        https://claude.ai/*
 // @run-at       document-idle
@@ -418,31 +418,14 @@
   }
 
   // --- Placement ---
-  // Wide windows: bottom-right, vertically centred on the message box's model
-  // button ("Opus 5.5", ...). Narrow windows: top-right, just under the page
-  // header, where it can't cover the message box controls.
-  const NARROW_WIDTH = 1300;
-  const DEFAULT_BOTTOM = 16;
+  // Always at the top. On Claude Code pages it sits inside the main pane's
+  // title bar, just before the icon group, so the row makes room for it.
+  // Elsewhere it's fixed top-right, just under the page header.
   const DEFAULT_TOP = 52;
-  const MODEL_NAME = /^(claude\s+)?(opus|sonnet|haiku|fable)\b/i;
 
   function isShown(el) {
     const r = el.getBoundingClientRect();
     return r.width > 0 && r.height > 0;
-  }
-
-  // The lowest model button in the bottom part of the window, if any.
-  function findModelButton() {
-    let best = null;
-    for (const el of document.querySelectorAll("button")) {
-      if (el.closest(`#${CONTAINER_ID}`)) continue;
-      if (!MODEL_NAME.test((el.textContent || "").trim())) continue;
-      if (!isShown(el)) continue;
-      const r = el.getBoundingClientRect();
-      if (r.bottom < window.innerHeight - 160) continue;
-      if (!best || r.bottom > best.getBoundingClientRect().bottom) best = el;
-    }
-    return best;
   }
 
   function findHeaderBottom() {
@@ -458,19 +441,29 @@
     container.style.setProperty(prop, value === null ? "auto" : `${Math.round(value)}px`, "important");
   }
 
-  // Claude Code's title bar: one flex row with the title/repo group on the
-  // left (which can shrink) and the icon group on the right (ml-auto).
+  // Claude Code title bars (session and project pages) are a flex row ending
+  // in an icon group pushed right with ml-auto. Pick the main pane's one:
+  // near the top, on the right half, and not in the project thread panel.
   function findTitlebar() {
-    const bar = document.querySelector('[data-perf-region="header"]');
-    if (!bar || !isShown(bar)) return null;
-    const icons = [...bar.children].find((el) => el.classList.contains("ml-auto"));
-    return icons ? { bar, icons } : null;
+    const groups = [
+      ...document.querySelectorAll('[data-perf-region="header"] > .ml-auto'),
+      ...document.querySelectorAll(".ml-auto.draggable-none")
+    ];
+    for (const icons of groups) {
+      const bar = icons.parentElement;
+      if (!bar || bar.closest(`#${CONTAINER_ID}`)) continue;
+      if (icons.closest('[data-perf-region="side_panel"]')) continue;
+      if (!isShown(icons)) continue;
+      const r = icons.getBoundingClientRect();
+      if (r.top > 80 || r.right < window.innerWidth * 0.5) continue;
+      if (getComputedStyle(bar).display !== "flex") continue;
+      return { bar, icons };
+    }
+    return null;
   }
 
-  // Inside the title bar the indicator is a normal item in the row, so the
-  // repo label shrinks to make room instead of being covered.
-  // The icon group's own ml-auto would split the free space with ours and
-  // leave a gap, so it's switched off while docked and restored after.
+  // The icon group's own ml-auto/padding would leave a gap before it, so
+  // they're switched off while docked and restored after.
   let dockedIcons = null;
 
   function releaseIcons() {
@@ -481,15 +474,33 @@
     dockedIcons = null;
   }
 
-  // Gap so the space between the indicator's text and the first icon matches
-  // the visible space between the first two icons (glyph to glyph).
+  // Box around what's actually drawn in a button (icons and text), ignoring
+  // full-size backgrounds, so "Overview" counts as icon + text.
+  function contentRect(btn) {
+    const rects = [...btn.querySelectorAll("svg")].map((el) => el.getBoundingClientRect());
+    const walker = document.createTreeWalker(btn, NodeFilter.SHOW_TEXT);
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      if (!node.textContent.trim()) continue;
+      const range = document.createRange();
+      range.selectNodeContents(node);
+      rects.push(range.getBoundingClientRect());
+    }
+    const shown = rects.filter((r) => r.width > 0 && r.height > 0);
+    if (!shown.length) return btn.getBoundingClientRect();
+    return {
+      left: Math.min(...shown.map((r) => r.left)),
+      right: Math.max(...shown.map((r) => r.right))
+    };
+  }
+
+  // Gap so the space from the indicator's text to the first button's content
+  // matches the visible space between the first two buttons' content.
   function iconSpacing(container, icons) {
     const buttons = [...icons.querySelectorAll("button")].filter(isShown);
-    const glyph = (btn) => (btn.querySelector("svg") || btn).getBoundingClientRect();
     if (buttons.length < 2) return 8;
     const [a, b] = buttons;
-    const visibleGap = glyph(b).left - glyph(a).right;
-    const insetBeforeFirst = glyph(a).left - a.getBoundingClientRect().left;
+    const visibleGap = contentRect(b).left - contentRect(a).right;
+    const insetBeforeFirst = contentRect(a).left - a.getBoundingClientRect().left;
     const indicator = container.querySelector(".claude-usage-indicator");
     const ownPadding = indicator ? parseFloat(getComputedStyle(indicator).paddingRight) || 0 : 0;
     return Math.max(0, visibleGap - insetBeforeFirst - ownPadding);
@@ -506,7 +517,7 @@
       dockedIcons = icons;
     }
     container.style.setProperty("margin-right", `${Math.round(iconSpacing(container, icons))}px`, "important");
-    container.classList.add("claude-usage-docked", "claude-usage-at-top", "draggable-none");
+    container.classList.add("claude-usage-docked", "draggable-none");
     setPx(container, "top", null);
     setPx(container, "bottom", null);
   }
@@ -521,31 +532,16 @@
   function updatePosition() {
     const container = document.getElementById(CONTAINER_ID);
     if (!container) return;
-    if (window.innerWidth < NARROW_WIDTH) {
-      const titlebar = findTitlebar();
-      if (titlebar) {
-        dockInTitlebar(container, titlebar);
-        return;
-      }
-      undock(container);
-      const headerBottom = findHeaderBottom();
-      container.classList.add("claude-usage-at-top");
-      setPx(container, "top", headerBottom === null ? DEFAULT_TOP : headerBottom + 8);
-      setPx(container, "bottom", null);
+    container.classList.add("claude-usage-at-top");
+    const titlebar = findTitlebar();
+    if (titlebar) {
+      dockInTitlebar(container, titlebar);
       return;
     }
     undock(container);
-    container.classList.remove("claude-usage-at-top");
-    setPx(container, "top", null);
-    const button = findModelButton();
-    if (!button) {
-      setPx(container, "bottom", DEFAULT_BOTTOM);
-      return;
-    }
-    const r = button.getBoundingClientRect();
-    const centre = r.top + r.height / 2;
-    const bottom = window.innerHeight - centre - container.offsetHeight / 2;
-    setPx(container, "bottom", Math.max(0, bottom));
+    const headerBottom = findHeaderBottom();
+    setPx(container, "top", headerBottom === null ? DEFAULT_TOP : headerBottom + 8);
+    setPx(container, "bottom", null);
   }
 
   async function pollAndRender() {
