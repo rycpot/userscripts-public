@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Claude Usage Monitor
 // @namespace    claude-usage-monitor
-// @version      0.7.0
+// @version      0.8.0
 // @description  Shows Claude usage limits, and any active usage credit, in a fixed bottom-right indicator.
 // @match        https://claude.ai/*
 // @run-at       document-idle
@@ -458,16 +458,63 @@
     container.style.setProperty(prop, value === null ? "auto" : `${Math.round(value)}px`, "important");
   }
 
+  // Claude Code's title bar: one flex row with the title/repo group on the
+  // left (which can shrink) and the icon group on the right (ml-auto).
+  function findTitlebar() {
+    const bar = document.querySelector('[data-perf-region="header"]');
+    if (!bar || !isShown(bar)) return null;
+    const icons = [...bar.children].find((el) => el.classList.contains("ml-auto"));
+    return icons ? { bar, icons } : null;
+  }
+
+  // Inside the title bar the indicator is a normal item in the row, so the
+  // repo label shrinks to make room instead of being covered.
+  // The icon group's own ml-auto would split the free space with ours and
+  // leave a gap, so it's switched off while docked and restored after.
+  let dockedIcons = null;
+
+  function releaseIcons() {
+    if (dockedIcons) dockedIcons.style.removeProperty("margin-left");
+    dockedIcons = null;
+  }
+
+  function dockInTitlebar(container, { bar, icons }) {
+    if (container.parentElement !== bar || container.nextElementSibling !== icons) {
+      bar.insertBefore(container, icons);
+    }
+    if (dockedIcons !== icons) {
+      releaseIcons();
+      icons.style.setProperty("margin-left", "0px");
+      dockedIcons = icons;
+    }
+    container.classList.add("claude-usage-docked", "claude-usage-at-top", "draggable-none");
+    setPx(container, "top", null);
+    setPx(container, "bottom", null);
+  }
+
+  function undock(container) {
+    releaseIcons();
+    if (container.parentElement !== document.body) document.body.appendChild(container);
+    container.classList.remove("claude-usage-docked", "draggable-none");
+  }
+
   function updatePosition() {
     const container = document.getElementById(CONTAINER_ID);
     if (!container) return;
     if (window.innerWidth < NARROW_WIDTH) {
+      const titlebar = findTitlebar();
+      if (titlebar) {
+        dockInTitlebar(container, titlebar);
+        return;
+      }
+      undock(container);
       const headerBottom = findHeaderBottom();
       container.classList.add("claude-usage-at-top");
       setPx(container, "top", headerBottom === null ? DEFAULT_TOP : headerBottom + 8);
       setPx(container, "bottom", null);
       return;
     }
+    undock(container);
     container.classList.remove("claude-usage-at-top");
     setPx(container, "top", null);
     const button = findModelButton();
@@ -646,6 +693,15 @@
         border-left: 6px solid transparent;
         border-right: 6px solid transparent;
         border-top: 6px solid hsl(var(--bg-000));
+      }
+
+      #${CONTAINER_ID}.claude-usage-docked {
+        position: relative !important;
+        right: auto !important;
+        margin-left: auto;
+        margin-right: 4px;
+        flex-shrink: 0;
+        z-index: 50 !important;
       }
 
       #${CONTAINER_ID}.claude-usage-at-top .claude-usage-tooltip {
