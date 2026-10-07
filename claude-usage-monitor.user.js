@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Claude Usage Monitor
 // @namespace    claude-usage-monitor
-// @version      0.6.1
+// @version      0.7.0
 // @description  Shows Claude usage limits, and any active usage credit, in a fixed bottom-right indicator.
 // @match        https://claude.ai/*
 // @run-at       document-idle
@@ -125,6 +125,7 @@
           </div>
         </button>`;
       attachTooltipListeners(container);
+      updatePosition();
       return;
     }
 
@@ -196,6 +197,7 @@
       </button>`;
 
     attachTooltipListeners(container);
+    updatePosition();
   }
 
   // src/logic/usageData.js
@@ -415,6 +417,70 @@
     return container;
   }
 
+  // --- Placement ---
+  // Wide windows: bottom-right, vertically centred on the message box's model
+  // button ("Opus 5.5", ...). Narrow windows: top-right, just under the page
+  // header, where it can't cover the message box controls.
+  const NARROW_WIDTH = 1300;
+  const DEFAULT_BOTTOM = 16;
+  const DEFAULT_TOP = 52;
+  const MODEL_NAME = /^(claude\s+)?(opus|sonnet|haiku|fable)\b/i;
+
+  function isShown(el) {
+    const r = el.getBoundingClientRect();
+    return r.width > 0 && r.height > 0;
+  }
+
+  // The lowest model button in the bottom part of the window, if any.
+  function findModelButton() {
+    let best = null;
+    for (const el of document.querySelectorAll("button")) {
+      if (el.closest(`#${CONTAINER_ID}`)) continue;
+      if (!MODEL_NAME.test((el.textContent || "").trim())) continue;
+      if (!isShown(el)) continue;
+      const r = el.getBoundingClientRect();
+      if (r.bottom < window.innerHeight - 160) continue;
+      if (!best || r.bottom > best.getBoundingClientRect().bottom) best = el;
+    }
+    return best;
+  }
+
+  function findHeaderBottom() {
+    for (const el of document.querySelectorAll("header")) {
+      if (el.closest(`#${CONTAINER_ID}`) || !isShown(el)) continue;
+      const r = el.getBoundingClientRect();
+      if (r.top <= 8 && r.height <= 120 && r.right > window.innerWidth - 80) return r.bottom;
+    }
+    return null;
+  }
+
+  function setPx(container, prop, value) {
+    container.style.setProperty(prop, value === null ? "auto" : `${Math.round(value)}px`, "important");
+  }
+
+  function updatePosition() {
+    const container = document.getElementById(CONTAINER_ID);
+    if (!container) return;
+    if (window.innerWidth < NARROW_WIDTH) {
+      const headerBottom = findHeaderBottom();
+      container.classList.add("claude-usage-at-top");
+      setPx(container, "top", headerBottom === null ? DEFAULT_TOP : headerBottom + 8);
+      setPx(container, "bottom", null);
+      return;
+    }
+    container.classList.remove("claude-usage-at-top");
+    setPx(container, "top", null);
+    const button = findModelButton();
+    if (!button) {
+      setPx(container, "bottom", DEFAULT_BOTTOM);
+      return;
+    }
+    const r = button.getBoundingClientRect();
+    const centre = r.top + r.height / 2;
+    const bottom = window.innerHeight - centre - container.offsetHeight / 2;
+    setPx(container, "bottom", Math.max(0, bottom));
+  }
+
   async function pollAndRender() {
     ensureContainer();
 
@@ -469,7 +535,6 @@
       #${CONTAINER_ID} {
         position: fixed !important;
         right: 16px !important;
-        bottom: 16px !important;
         z-index: 2147483647 !important;
         display: flex;
         align-items: center;
@@ -583,6 +648,20 @@
         border-top: 6px solid hsl(var(--bg-000));
       }
 
+      #${CONTAINER_ID}.claude-usage-at-top .claude-usage-tooltip {
+        bottom: auto;
+        top: 100%;
+        margin-bottom: 0;
+        margin-top: 12px;
+      }
+
+      #${CONTAINER_ID}.claude-usage-at-top .claude-usage-tooltip::after {
+        top: auto;
+        bottom: 100%;
+        border-top: 0;
+        border-bottom: 6px solid hsl(var(--bg-000));
+      }
+
       #${CONTAINER_ID} .claude-usage-tooltip-title {
         font-weight: 600;
         margin-bottom: 8px;
@@ -620,6 +699,12 @@
     setInterval(pollAndRender, 3 * 60 * 1000);
     setInterval(rerenderCached, 60 * 1000);
     setupMutationObserver();
+
+    // The message box grows as you type and the layout shifts, so keep
+    // re-placing the indicator; it's a cheap check.
+    updatePosition();
+    window.addEventListener("resize", updatePosition);
+    setInterval(updatePosition, 500);
   }
 
   if (document.readyState === "loading") {
