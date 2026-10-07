@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Claude Usage Monitor
 // @namespace    claude-usage-monitor
-// @version      0.9.0
+// @version      0.9.1
 // @description  Shows Claude usage limits, and any active usage credit, in a fixed bottom-right indicator.
 // @match        https://claude.ai/*
 // @run-at       document-idle
@@ -412,6 +412,9 @@
     if (!container) {
       container = document.createElement("div");
       container.id = CONTAINER_ID;
+      // Hidden until updatePosition() has settled its spot, so it doesn't
+      // flash somewhere else and then jump.
+      container.style.visibility = "hidden";
       document.body.appendChild(container);
     }
     return container;
@@ -529,6 +532,22 @@
     container.classList.remove("claude-usage-docked", "draggable-none");
   }
 
+  // The title bar is built a moment after the page loads, and the spacing
+  // depends on text widths, which change once the web font loads. Stay hidden
+  // until both are ready; pages with no title bar show the fallback spot
+  // after a short wait.
+  const FALLBACK_DELAY_MS = 2500;
+  const startedAt = Date.now();
+  let fontsReady = !document.fonts;
+  document.fonts?.ready.then(() => {
+    fontsReady = true;
+    updatePosition();
+  });
+
+  function setVisible(container, visible) {
+    container.style.visibility = visible ? "" : "hidden";
+  }
+
   function updatePosition() {
     const container = document.getElementById(CONTAINER_ID);
     if (!container) return;
@@ -536,8 +555,14 @@
     const titlebar = findTitlebar();
     if (titlebar) {
       dockInTitlebar(container, titlebar);
+      setVisible(container, fontsReady);
       return;
     }
+    if (Date.now() - startedAt < FALLBACK_DELAY_MS) {
+      setVisible(container, false);
+      return;
+    }
+    setVisible(container, true);
     undock(container);
     const headerBottom = findHeaderBottom();
     setPx(container, "top", headerBottom === null ? DEFAULT_TOP : headerBottom + 8);
@@ -575,7 +600,21 @@
 
   function setupMutationObserver() {
     let mutationTimeout;
+    let positionQueued = false;
     const observer = new MutationObserver(() => {
+      // Re-dock on the next frame if the title bar just appeared or was
+      // re-rendered without us, rather than waiting for the 500ms check.
+      if (!positionQueued) {
+        positionQueued = true;
+        requestAnimationFrame(() => {
+          positionQueued = false;
+          const container = document.getElementById(CONTAINER_ID);
+          if (!container || !container.classList.contains("claude-usage-docked") || !container.isConnected) {
+            ensureContainer();
+            updatePosition();
+          }
+        });
+      }
       clearTimeout(mutationTimeout);
       mutationTimeout = setTimeout(() => {
         ensureContainer();
