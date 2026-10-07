@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Claude Usage Monitor
 // @namespace    claude-usage-monitor
-// @version      0.9.2
+// @version      0.9.3
 // @description  Shows Claude usage limits, and any active usage credit, in a fixed bottom-right indicator.
 // @match        https://claude.ai/*
 // @run-at       document-idle
@@ -36,6 +36,16 @@
 
 
 
+
+  // An invalid tag (e.g. "en-US@posix") would make every toLocale* call
+  // throw, so fall back to the browser default.
+  function safeLocale(tag) {
+    try {
+      return Intl.DateTimeFormat.supportedLocalesOf([tag]).length ? tag : undefined;
+    } catch {
+      return undefined;
+    }
+  }
 
   // One date/time style everywhere: "06:08PM" today, "Oct 25 01:26PM" on
   // another day, "Jan 3 2027 09:00AM" when the year differs from now.
@@ -131,7 +141,7 @@
 
     const { fiveHour, sevenDay } = data;
     const pct = toPercent(fiveHour.utilization);
-    const locale = navigator.language;
+    const locale = safeLocale(navigator.language);
     const now = new Date();
     const fiveReset = formatWhen(fiveHour.resetsAt, now, locale);
     const compactFiveReset = formatWhen(fiveHour.resetsAt, now, locale);
@@ -550,14 +560,61 @@
   // fonts.ready resolves as soon as nothing is downloading, which on a fresh
   // load can be before the title bar has even asked for its font. So check
   // the title bar's own font instead.
-  function titlebarFontLoaded(icons) {
-    if (!document.fonts) return true;
-    const sample = icons.querySelector("button") || icons;
-    const style = getComputedStyle(sample);
+  function fontLoaded(el) {
+    const style = getComputedStyle(el);
     try {
-      return document.fonts.check(`${style.fontSize} ${style.fontFamily}`) && document.fonts.status === "loaded";
+      return document.fonts.check(`${style.fontStyle} ${style.fontWeight} ${style.fontSize} ${style.fontFamily}`);
     } catch {
       return true;
+    }
+  }
+
+  function fontsSettled(container, icons) {
+    if (!document.fonts) return true;
+    if (document.fonts.status !== "loaded") return false;
+    const samples = [icons.querySelector("button") || icons, container.querySelector(".claude-usage-percent")];
+    return samples.every((el) => !el || fontLoaded(el));
+  }
+
+  // On a full reload the page keeps shifting for a moment after the title
+  // bar appears (fonts, panels settling at their saved sizes), so only reveal
+  // once the indicator and icons have stayed put for a short while.
+  const STABLE_FOR_MS = 400;
+  const DATA_WAIT_MS = 10000;
+  let stableSignature = null;
+  let stableSince = 0;
+  let revealTimer = null;
+
+  function scheduleRevealCheck() {
+    if (revealTimer) return;
+    revealTimer = setTimeout(() => {
+      revealTimer = null;
+      updatePosition();
+    }, 100);
+  }
+
+  function layoutSignature(container, icons) {
+    const c = container.getBoundingClientRect();
+    const i = icons.getBoundingClientRect();
+    return [c.left, c.top, c.width, i.left, i.width].map(Math.round).join(",");
+  }
+
+  function revealWhenSettled(container, icons) {
+    if (container.style.visibility !== "hidden") return;
+    // Wait for the usage numbers too, so it can't show "?" and then widen
+    // (unless the fetch is failing, in which case show what we have).
+    const hasData = !!container.querySelector(".claude-usage-percent") || Date.now() - startedAt > DATA_WAIT_MS;
+    const signature = hasData && fontsSettled(container, icons) ? layoutSignature(container, icons) : null;
+    if (signature === null || signature !== stableSignature) {
+      stableSignature = signature;
+      stableSince = Date.now();
+      scheduleRevealCheck();
+      return;
+    }
+    if (Date.now() - stableSince >= STABLE_FOR_MS) {
+      setVisible(container, true);
+    } else {
+      scheduleRevealCheck();
     }
   }
 
@@ -575,7 +632,7 @@
     const titlebar = findTitlebar();
     if (titlebar) {
       dockInTitlebar(container, titlebar);
-      setVisible(container, titlebarFontLoaded(titlebar.icons));
+      revealWhenSettled(container, titlebar.icons);
       return;
     }
     if (Date.now() - startedAt < fallbackDelay()) {
