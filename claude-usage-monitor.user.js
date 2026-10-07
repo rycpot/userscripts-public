@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Claude Usage Monitor
 // @namespace    claude-usage-monitor
-// @version      0.9.5
+// @version      0.9.6
 // @description  Shows Claude usage limits, and any active usage credit, in a fixed bottom-right indicator.
 // @match        https://claude.ai/*
 // @run-at       document-idle
@@ -16,6 +16,12 @@
 
   const CONTAINER_ID = "claude-usage-userscript-container";
   const TOOLTIP_ID = "claude-usage-userscript-tooltip";
+  // The tooltip is shown in its own layer on <body>: inside the title bar it
+  // would be stuck under page content on pages where the title bar sits in a
+  // lower stacking context (e.g. Claude Code project pages).
+  const LAYER_ID = "claude-usage-userscript-tooltip-layer";
+  let tooltipOpen = false;
+  let showCurrentTooltip = null;
 
   // src/logic/usageColors.js
   function getUtilizationColor(percent) {
@@ -88,30 +94,60 @@
     // title bar's own inset) inside the window; the arrow always points at
     // the indicator's centre.
     const TOOLTIP_EDGE_GAP = 12;
+    const TOOLTIP_OFFSET = 12;
+
+    const getLayer = () => {
+      let layer = document.getElementById(LAYER_ID);
+      if (!layer) {
+        layer = document.createElement("div");
+        layer.id = LAYER_ID;
+        document.body.appendChild(layer);
+      }
+      return layer;
+    };
+
+    // Copy the theme colours and font from where the indicator sits, so the
+    // tooltip matches light/dark mode outside that part of the page.
+    const copyTheme = (layer) => {
+      const cs = getComputedStyle(containerEl);
+      for (const name of ["--bg-000", "--text-100"]) {
+        const value = cs.getPropertyValue(name);
+        if (value) layer.style.setProperty(name, value);
+      }
+      layer.style.fontFamily = cs.fontFamily;
+    };
+
     const positionTooltip = (tooltip) => {
       const r = indicator.getBoundingClientRect();
       const centre = r.left + r.width / 2;
       const width = tooltip.offsetWidth;
-      let right = centre + width / 2;
-      right = Math.min(right, window.innerWidth - TOOLTIP_EDGE_GAP);
-      right = Math.max(right, TOOLTIP_EDGE_GAP + width);
-      const base = (tooltip.offsetParent || indicator).getBoundingClientRect();
-      tooltip.style.right = `${base.right - right}px`;
-      tooltip.style.setProperty("--claude-usage-arrow-right", `${Math.max(6, right - centre - 6)}px`);
+      let left = centre - width / 2;
+      left = Math.min(left, window.innerWidth - TOOLTIP_EDGE_GAP - width);
+      left = Math.max(left, TOOLTIP_EDGE_GAP);
+      tooltip.style.left = `${Math.round(left)}px`;
+      tooltip.style.top = `${Math.round(r.bottom + TOOLTIP_OFFSET)}px`;
+      tooltip.style.setProperty("--claude-usage-arrow-right", `${Math.max(6, left + width - centre - 6)}px`);
     };
 
     const showTooltip = () => {
       const tooltip = containerEl.querySelector(".claude-usage-tooltip");
+      const layer = getLayer();
       if (tooltip) {
-        tooltip.style.display = "block";
-        positionTooltip(tooltip);
+        copyTheme(layer);
+        layer.replaceChildren(tooltip);
       }
+      const shown = layer.querySelector(".claude-usage-tooltip");
+      if (shown) {
+        shown.style.display = "block";
+        positionTooltip(shown);
+      }
+      tooltipOpen = true;
       indicator.setAttribute("aria-expanded", "true");
     };
 
     const hideTooltip = () => {
-      const tooltip = containerEl.querySelector(".claude-usage-tooltip");
-      if (tooltip) tooltip.style.display = "none";
+      document.getElementById(LAYER_ID)?.replaceChildren();
+      tooltipOpen = false;
       indicator.setAttribute("aria-expanded", "false");
     };
 
@@ -120,13 +156,15 @@
     indicator.addEventListener("focus", showTooltip);
     indicator.addEventListener("blur", hideTooltip);
     indicator.addEventListener("click", () => {
-      const tooltip = containerEl.querySelector(".claude-usage-tooltip");
-      const isVisible = tooltip?.style.display === "block";
-      isVisible ? hideTooltip() : showTooltip();
+      tooltipOpen ? hideTooltip() : showTooltip();
     });
     indicator.addEventListener("keydown", (e) => {
       if (e.key === "Escape") hideTooltip();
     });
+
+    // Re-rendered while open (data refresh): keep it open with the new content.
+    showCurrentTooltip = showTooltip;
+    if (tooltipOpen) showTooltip();
   }
 
   function renderIndicator(data) {
@@ -688,7 +726,6 @@
   function updatePosition() {
     const container = document.getElementById(CONTAINER_ID);
     if (!container) return;
-    container.classList.add("claude-usage-at-top");
     const titlebar = findTitlebar();
     if (titlebar) {
       dockInTitlebar(container, titlebar);
@@ -859,35 +896,41 @@
 
       #${CONTAINER_ID} .claude-usage-tooltip {
         display: none;
-        position: absolute;
-        bottom: 100%;
-        right: 0;
-        left: auto;
-        transform: none;
+      }
+
+      #${LAYER_ID} {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 0;
+        height: 0;
+        z-index: 2147483647;
+        pointer-events: none;
+      }
+
+      #${LAYER_ID} .claude-usage-tooltip {
+        position: fixed;
         background: hsl(var(--bg-000));
         color: hsl(var(--text-100));
         border-radius: 8px;
         padding: 12px;
         min-width: 200px;
         box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
-        z-index: 2147483647;
         font-size: 12px;
-        margin-bottom: 12px;
         white-space: nowrap;
+        pointer-events: none;
       }
 
-      #${CONTAINER_ID} .claude-usage-tooltip::after {
+      #${LAYER_ID} .claude-usage-tooltip::after {
         content: '';
         position: absolute;
-        top: 100%;
+        bottom: 100%;
         right: var(--claude-usage-arrow-right, 0px);
-        left: auto;
-        transform: none;
         width: 0;
         height: 0;
         border-left: 6px solid transparent;
         border-right: 6px solid transparent;
-        border-top: 6px solid hsl(var(--bg-000));
+        border-bottom: 6px solid hsl(var(--bg-000));
       }
 
       #${CONTAINER_ID}.claude-usage-docked {
@@ -899,41 +942,29 @@
         z-index: 50 !important;
       }
 
-      #${CONTAINER_ID}.claude-usage-at-top .claude-usage-tooltip {
-        bottom: auto;
-        top: 100%;
-        margin-bottom: 0;
-        margin-top: 12px;
-      }
 
-      #${CONTAINER_ID}.claude-usage-at-top .claude-usage-tooltip::after {
-        top: auto;
-        bottom: 100%;
-        border-top: 0;
-        border-bottom: 6px solid hsl(var(--bg-000));
-      }
-
-      #${CONTAINER_ID} .claude-usage-tooltip-title {
+      #${LAYER_ID} .claude-usage-tooltip-title {
+        text-align: center;
         font-weight: 600;
         margin-bottom: 8px;
         font-size: 13px;
       }
 
-      #${CONTAINER_ID} .claude-usage-tooltip-row {
+      #${LAYER_ID} .claude-usage-tooltip-row {
         display: flex;
         justify-content: space-between;
         padding: 2px 0;
         gap: 12px;
       }
 
-      #${CONTAINER_ID} .claude-usage-tooltip-group,
-      #${CONTAINER_ID} .claude-usage-tooltip-billing {
+      #${LAYER_ID} .claude-usage-tooltip-group,
+      #${LAYER_ID} .claude-usage-tooltip-billing {
         border-top: 1px solid hsl(var(--text-100) / 0.15);
         margin-top: 6px;
         padding-top: 6px;
       }
 
-      #${CONTAINER_ID} .claude-usage-tooltip-row span:first-child {
+      #${LAYER_ID} .claude-usage-tooltip-row span:first-child {
         opacity: 0.7;
         flex-shrink: 0;
       }
@@ -955,7 +986,10 @@
     // The message box grows as you type and the layout shifts, so keep
     // re-placing the indicator; it's a cheap check.
     updatePosition();
-    window.addEventListener("resize", updatePosition);
+    window.addEventListener("resize", () => {
+      updatePosition();
+      if (tooltipOpen && showCurrentTooltip) showCurrentTooltip();
+    });
     setInterval(updatePosition, 500);
   }
 
