@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Claude Usage Monitor
 // @namespace    claude-usage-monitor
-// @version      0.8.0
+// @version      0.8.1
 // @description  Shows Claude usage limits, and any active usage credit, in a fixed bottom-right indicator.
 // @match        https://claude.ai/*
 // @run-at       document-idle
@@ -474,8 +474,25 @@
   let dockedIcons = null;
 
   function releaseIcons() {
-    if (dockedIcons) dockedIcons.style.removeProperty("margin-left");
+    if (dockedIcons) {
+      dockedIcons.style.removeProperty("margin-left");
+      dockedIcons.style.removeProperty("padding-left");
+    }
     dockedIcons = null;
+  }
+
+  // Gap so the space between the indicator's text and the first icon matches
+  // the visible space between the first two icons (glyph to glyph).
+  function iconSpacing(container, icons) {
+    const buttons = [...icons.querySelectorAll("button")].filter(isShown);
+    const glyph = (btn) => (btn.querySelector("svg") || btn).getBoundingClientRect();
+    if (buttons.length < 2) return 8;
+    const [a, b] = buttons;
+    const visibleGap = glyph(b).left - glyph(a).right;
+    const insetBeforeFirst = glyph(a).left - a.getBoundingClientRect().left;
+    const indicator = container.querySelector(".claude-usage-indicator");
+    const ownPadding = indicator ? parseFloat(getComputedStyle(indicator).paddingRight) || 0 : 0;
+    return Math.max(0, visibleGap - insetBeforeFirst - ownPadding);
   }
 
   function dockInTitlebar(container, { bar, icons }) {
@@ -485,8 +502,10 @@
     if (dockedIcons !== icons) {
       releaseIcons();
       icons.style.setProperty("margin-left", "0px");
+      icons.style.setProperty("padding-left", "0px");
       dockedIcons = icons;
     }
+    container.style.setProperty("margin-right", `${Math.round(iconSpacing(container, icons))}px`, "important");
     container.classList.add("claude-usage-docked", "claude-usage-at-top", "draggable-none");
     setPx(container, "top", null);
     setPx(container, "bottom", null);
@@ -494,6 +513,7 @@
 
   function undock(container) {
     releaseIcons();
+    container.style.removeProperty("margin-right");
     if (container.parentElement !== document.body) document.body.appendChild(container);
     container.classList.remove("claude-usage-docked", "draggable-none");
   }
