@@ -83,7 +83,7 @@ Updates are automatic: your userscript manager checks this repo and installs a n
 </p>
 
 <h2>Claude Usage Monitor</h2>
-<p>Shows your Claude usage in the bottom-right corner of claude.ai: the 5-hour limit as a percentage with its reset time. Hover or click it for both the 5-hour and 7-day limits and when each resets.</p>
+<p>Shows your Claude usage at the top right of claude.ai: the 5-hour limit as a percentage with its reset time. Hover or click it for both the 5-hour and 7-day limits and when each resets.</p>
 <p>
   <a href="https://raw.githubusercontent.com/rycpot/userscripts-public/main/claude-usage-monitor.user.js">
     <img src="https://img.shields.io/badge/Install-Userscript-4CAF50?style=for-the-badge&logo=tampermonkey&logoColor=white" alt="Install Claude Usage Monitor">
