@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Claude Usage Monitor
 // @namespace    claude-usage-monitor
-// @version      0.9.6
-// @description  Shows Claude usage limits, and any active usage credit, in a fixed bottom-right indicator.
+// @version      0.9.7
+// @description  Shows Claude usage limits, and any active usage credit, in a top-right indicator.
 // @match        https://claude.ai/*
 // @run-at       document-idle
 // @grant        none
@@ -493,8 +493,17 @@
   // --- Placement ---
   // Always at the top. On Claude Code pages it sits inside the main pane's
   // title bar, just before the icon group, so the row makes room for it.
-  // Elsewhere it's fixed top-right, just under the page header.
+  // On new-chat and Claude Code home pages it's in the top row, just left of
+  // any top-right buttons. Elsewhere it's fixed top-right, just under the
+  // page header.
   const DEFAULT_TOP = 52;
+  // Centre of the top row when there's no button to line up with.
+  const DEFAULT_ROW_CENTRE = 26;
+  const ROW_GAP = 8;
+
+  function isNewPage() {
+    return /^\/(new|code)?\/?$/.test(location.pathname);
+  }
 
   function isShown(el) {
     const r = el.getBoundingClientRect();
@@ -512,6 +521,32 @@
 
   function setPx(container, prop, value) {
     container.style.setProperty(prop, value === null ? "auto" : `${Math.round(value)}px`, "important");
+  }
+
+  // Buttons in the page's top row (the sidebar's first row and any
+  // top-right buttons such as the incognito ghost).
+  function topRowButtons() {
+    return [...document.querySelectorAll("button, a[href]")].filter((el) => {
+      if (el.closest(`#${CONTAINER_ID}, #${LAYER_ID}`) || !isShown(el)) return false;
+      const r = el.getBoundingClientRect();
+      return r.top >= 0 && r.top < 60 && r.height < 60;
+    });
+  }
+
+  function placeInTopRow(container) {
+    const buttons = topRowButtons();
+    const right = buttons.filter((el) => el.getBoundingClientRect().left > window.innerWidth * 0.5);
+    const leftmost = right.sort((a, b) => a.getBoundingClientRect().left - b.getBoundingClientRect().left)[0];
+    const anchor = leftmost || buttons[0];
+    const a = anchor ? anchor.getBoundingClientRect() : null;
+    const centre = a ? a.top + a.height / 2 : DEFAULT_ROW_CENTRE;
+    setPx(container, "top", centre - container.getBoundingClientRect().height / 2);
+    setPx(container, "bottom", null);
+    if (leftmost) {
+      setPx(container, "right", window.innerWidth - a.left + ROW_GAP);
+    } else {
+      container.style.removeProperty("right");
+    }
   }
 
   // Claude Code title bars (session and project pages) are a flex row ending
@@ -596,6 +631,7 @@
     }
     container.style.setProperty("margin-right", `${Math.round(iconSpacing(container, icons))}px`, "important");
     container.classList.add("claude-usage-docked", "draggable-none");
+    container.style.removeProperty("right");
     setPx(container, "top", null);
     setPx(container, "bottom", null);
   }
@@ -616,10 +652,11 @@
   const CODE_FALLBACK_DELAY_MS = 15000;
   const startedAt = Date.now();
 
-  // Claude Code pages always get a title bar, but a full reload can take a
-  // few seconds to build it, so wait much longer before the fallback spot.
+  // Claude Code session and project pages always get a title bar, but a full
+  // reload can take a few seconds to build it, so wait much longer before the
+  // fallback spot. The Claude Code home page has none.
   function fallbackDelay() {
-    return location.pathname.startsWith("/code") ? CODE_FALLBACK_DELAY_MS : FALLBACK_DELAY_MS;
+    return location.pathname.startsWith("/code") && !isNewPage() ? CODE_FALLBACK_DELAY_MS : FALLBACK_DELAY_MS;
   }
 
   // fonts.ready resolves as soon as nothing is downloading, which on a fresh
@@ -741,6 +778,11 @@
     undock(container);
     setVisible(container, true);
     debugLogMovement(container);
+    if (isNewPage()) {
+      placeInTopRow(container);
+      return;
+    }
+    container.style.removeProperty("right");
     const headerBottom = findHeaderBottom();
     setPx(container, "top", headerBottom === null ? DEFAULT_TOP : headerBottom + 8);
     setPx(container, "bottom", null);
