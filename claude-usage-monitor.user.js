@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Claude Usage Monitor
 // @namespace    claude-usage-monitor
-// @version      0.9.7
+// @version      0.9.8
 // @description  Shows Claude usage limits, and any active usage credit, in a top-right indicator.
 // @match        https://claude.ai/*
 // @run-at       document-idle
@@ -550,12 +550,14 @@
   }
 
   // Claude Code title bars (session and project pages) are a flex row ending
-  // in an icon group pushed right with ml-auto. Pick the main pane's one:
-  // near the top, on the right half, and not in the project thread panel.
+  // in an icon group pushed right with ml-auto. Claude Design's header is the
+  // same, but its icon group follows a flex-1 spacer. Pick the main pane's
+  // one: near the top, on the right half, and not in the project thread panel.
   function findTitlebar() {
     const groups = [
       ...document.querySelectorAll('[data-perf-region="header"] > .ml-auto'),
-      ...document.querySelectorAll(".ml-auto.draggable-none")
+      ...document.querySelectorAll(".ml-auto.draggable-none"),
+      ...document.querySelectorAll('[data-testid="floating-card"] > div > .flex-1.min-w-0 ~ .shrink-0')
     ];
     for (const icons of groups) {
       const bar = icons.parentElement;
@@ -652,11 +654,12 @@
   const CODE_FALLBACK_DELAY_MS = 15000;
   const startedAt = Date.now();
 
-  // Claude Code session and project pages always get a title bar, but a full
-  // reload can take a few seconds to build it, so wait much longer before the
-  // fallback spot. The Claude Code home page has none.
+  // Claude Code session and project pages and Claude Design always get a
+  // title bar, but a full reload can take a few seconds to build it, so wait
+  // much longer before the fallback spot. The Claude Code home page has none.
   function fallbackDelay() {
-    return location.pathname.startsWith("/code") && !isNewPage() ? CODE_FALLBACK_DELAY_MS : FALLBACK_DELAY_MS;
+    const hasTitlebar = /^\/(code|design)(\/|$)/.test(location.pathname) && !isNewPage();
+    return hasTitlebar ? CODE_FALLBACK_DELAY_MS : FALLBACK_DELAY_MS;
   }
 
   // fonts.ready resolves as soon as nothing is downloading, which on a fresh
