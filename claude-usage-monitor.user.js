@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Claude Usage Monitor
 // @namespace    claude-usage-monitor
-// @version      0.9.8
+// @version      0.9.9
 // @description  Shows Claude usage limits, and any active usage credit, in a top-right indicator.
 // @match        https://claude.ai/*
 // @run-at       document-idle
@@ -25,9 +25,9 @@
 
   // src/logic/usageColors.js
   function getUtilizationColor(percent) {
-    if (percent < 50) return "hsl(var(--success-100))";
-    if (percent < 80) return "hsl(var(--warning-100))";
-    return "hsl(var(--danger-100))";
+    if (percent < 50) return "hsl(var(--claude-usage-success))";
+    if (percent < 80) return "hsl(var(--claude-usage-warning))";
+    return "hsl(var(--claude-usage-danger))";
   }
 
   // Round down, like claude.ai's Settings > Usage page (79.7 shows as 79%).
@@ -856,6 +856,29 @@
     const style = document.createElement("style");
     style.id = "claude-usage-userscript-styles";
     style.textContent = `
+      /* claude.ai's theme colours, with fallbacks for pages that don't
+         define them (Claude Design), where the tooltip would otherwise be
+         transparent and the status dot invisible. */
+      #${CONTAINER_ID}, #${LAYER_ID} {
+        --claude-usage-bg: var(--bg-000, 0 0% 100%);
+        --claude-usage-text: var(--text-100, 60 2.6% 7.6%);
+        --claude-usage-text-300: var(--text-300, 50 2.3% 33%);
+        --claude-usage-text-400: var(--text-400, 51 3.1% 43.7%);
+        --claude-usage-success: var(--success-100, 103 72% 30%);
+        --claude-usage-warning: var(--warning-100, 39 88% 40%);
+        --claude-usage-danger: var(--danger-100, 0 58% 51%);
+      }
+
+      html[data-theme="dark"] :is(#${CONTAINER_ID}, #${LAYER_ID}) {
+        --claude-usage-bg: var(--bg-000, 60 2.1% 18.4%);
+        --claude-usage-text: var(--text-100, 48 33.3% 97.1%);
+        --claude-usage-text-300: var(--text-300, 48 10% 75%);
+        --claude-usage-text-400: var(--text-400, 48 5% 62%);
+        --claude-usage-success: var(--success-100, 97 59% 46%);
+        --claude-usage-warning: var(--warning-100, 39 88% 50%);
+        --claude-usage-danger: var(--danger-100, 0 98% 71%);
+      }
+
       #${CONTAINER_ID} {
         position: fixed !important;
         right: 16px !important;
@@ -864,7 +887,7 @@
         align-items: center;
         font-family: inherit;
         font-size: 12px;
-        color: hsl(var(--text-400));
+        color: hsl(var(--claude-usage-text-400));
         pointer-events: auto;
       }
 
@@ -875,7 +898,7 @@
       }
 
       #${CONTAINER_ID} .claude-usage-indicator:focus-visible {
-        outline: 2px solid hsl(var(--text-300));
+        outline: 2px solid hsl(var(--claude-usage-text-300));
         outline-offset: 2px;
       }
 
@@ -955,8 +978,8 @@
 
       #${LAYER_ID} .claude-usage-tooltip {
         position: fixed;
-        background: hsl(var(--bg-000));
-        color: hsl(var(--text-100));
+        background: hsl(var(--claude-usage-bg));
+        color: hsl(var(--claude-usage-text));
         border-radius: 8px;
         padding: 12px;
         min-width: 200px;
@@ -975,7 +998,7 @@
         height: 0;
         border-left: 6px solid transparent;
         border-right: 6px solid transparent;
-        border-bottom: 6px solid hsl(var(--bg-000));
+        border-bottom: 6px solid hsl(var(--claude-usage-bg));
       }
 
       #${CONTAINER_ID}.claude-usage-docked {
@@ -1004,7 +1027,7 @@
 
       #${LAYER_ID} .claude-usage-tooltip-group,
       #${LAYER_ID} .claude-usage-tooltip-billing {
-        border-top: 1px solid hsl(var(--text-100) / 0.15);
+        border-top: 1px solid hsl(var(--claude-usage-text) / 0.15);
         margin-top: 6px;
         padding-top: 6px;
       }
