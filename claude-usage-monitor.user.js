@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Claude Usage Monitor
 // @namespace    claude-usage-monitor
-// @version      0.9.9
+// @version      0.9.10
 // @description  Shows Claude usage limits, and any active usage credit, in a top-right indicator.
 // @match        https://claude.ai/*
 // @run-at       document-idle
@@ -557,7 +557,9 @@
     const groups = [
       ...document.querySelectorAll('[data-perf-region="header"] > .ml-auto'),
       ...document.querySelectorAll(".ml-auto.draggable-none"),
-      ...document.querySelectorAll('[data-testid="floating-card"] > div > .flex-1.min-w-0 ~ .shrink-0')
+      ...document.querySelectorAll('[data-testid="floating-card"] > div > .flex-1.min-w-0 ~ .shrink-0'),
+      // Chat conversation header: title, spacer, then the Share/actions slot.
+      ...document.querySelectorAll('[data-testid="chat-header"] > #dframe-header-actions-slot')
     ];
     for (const icons of groups) {
       const bar = icons.parentElement;
@@ -631,7 +633,11 @@
       icons.style.setProperty("padding-left", "0px");
       dockedIcons = icons;
     }
-    container.style.setProperty("margin-right", `${Math.round(iconSpacing(container, icons))}px`, "important");
+    // The row's own flex gap (e.g. gap-2 on the chat header) already sits
+    // between us and the icons, so take it off our margin.
+    const rowGap = parseFloat(getComputedStyle(bar).columnGap) || 0;
+    const margin = Math.max(0, iconSpacing(container, icons) - rowGap);
+    container.style.setProperty("margin-right", `${Math.round(margin)}px`, "important");
     container.classList.add("claude-usage-docked", "draggable-none");
     container.style.removeProperty("right");
     setPx(container, "top", null);
