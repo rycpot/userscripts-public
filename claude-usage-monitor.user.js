@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Claude Usage Monitor
 // @namespace    claude-usage-monitor
-// @version      0.9.10
+// @version      0.9.11
 // @description  Shows Claude usage limits, and any active usage credit, in a top-right indicator.
 // @match        https://claude.ai/*
 // @run-at       document-idle
@@ -555,8 +555,9 @@
   // one: near the top, on the right half, and not in the project thread panel.
   function findTitlebar() {
     const groups = [
-      ...document.querySelectorAll('[data-perf-region="header"] > .ml-auto'),
-      ...document.querySelectorAll(".ml-auto.draggable-none"),
+      // ml-auto, or ms-auto (logical) since claude.ai's newer title bars.
+      ...document.querySelectorAll('[data-perf-region="header"] > :is(.ml-auto, .ms-auto, .epitaxy-titlebar-end)'),
+      ...document.querySelectorAll(":is(.ml-auto, .ms-auto).draggable-none"),
       ...document.querySelectorAll('[data-testid="floating-card"] > div > .flex-1.min-w-0 ~ .shrink-0'),
       // Chat conversation header: title, spacer, then the Share/actions slot.
       ...document.querySelectorAll('[data-testid="chat-header"] > #dframe-header-actions-slot')
