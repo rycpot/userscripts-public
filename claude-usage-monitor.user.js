@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Claude Usage Monitor
 // @namespace    claude-usage-monitor
-// @version      1.0.1
+// @version      1.0.2
 // @description  Shows Claude usage limits, and any active usage credit, in an indicator at the bottom of the sidebar.
 // @match        https://claude.ai/*
 // @run-at       document-idle
@@ -495,7 +495,7 @@
   }
 
   // --- Placement ---
-  // Bottom of the left sidebar, as a centred row just below the account row: the same
+  // Bottom of the left sidebar, as a centred row just above the account row's separator: the same
   // spot on every claude.ai page (chat, Code, Design, ...), away from the
   // page headers that keep changing. With the sidebar collapsed or missing it
   // sits fixed in the bottom-left corner instead.
@@ -525,16 +525,37 @@
   }
 
 
+  // Sits just above the tray (and so above the separator line the tray draws
+  // over the account row), with a matching separator line of its own on top.
   function dockInSidebar(container, tray) {
-    if (container.parentElement !== tray || container !== tray.lastElementChild) {
+    if (container.parentElement !== tray.parentElement || container.nextElementSibling !== tray) {
       // Moving after it's been shown: hide and settle again rather than jump.
       debugLog("docking into the sidebar", tray.getBoundingClientRect());
       setVisible(container, false);
       stableSignature = null;
-      tray.appendChild(container);
+      tray.parentElement.insertBefore(container, tray);
     }
     container.classList.add("claude-usage-docked");
     for (const prop of ["top", "bottom", "left", "right"]) setPx(container, prop, null);
+    copySeparatorStyle(container, tray);
+  }
+
+  // Match our separator to the one claude.ai draws above the account row
+  // (the tray's ::before): its colour and how far it's inset from the sides.
+  function copySeparatorStyle(container, tray) {
+    const line = getComputedStyle(tray, "::before");
+    const visible = (c) => c && c !== "transparent" && !/rgba\(.*,\s*0\)$/.test(c);
+    let colour = null;
+    if (line.content !== "none") {
+      if (visible(line.backgroundColor)) colour = line.backgroundColor;
+      else if (parseFloat(line.borderTopWidth) > 0 && visible(line.borderTopColor)) colour = line.borderTopColor;
+    }
+    if (colour) container.style.setProperty("--claude-usage-separator", colour);
+    else container.style.removeProperty("--claude-usage-separator");
+    const absolute = line.position === "absolute" || line.position === "fixed";
+    const inset = (side) => Math.max(0, parseFloat(absolute ? line[side] : line[side === "left" ? "marginLeft" : "marginRight"]) || 0);
+    container.style.setProperty("--claude-usage-separator-left", `${Math.round(inset("left"))}px`);
+    container.style.setProperty("--claude-usage-separator-right", `${Math.round(inset("right"))}px`);
   }
 
   function placeInCorner(container) {
@@ -891,9 +912,20 @@
 
       #${CONTAINER_ID}.claude-usage-docked {
         position: relative !important;
-        justify-content: center;
+        flex-direction: column;
+        align-items: center;
+        flex-shrink: 0;
         z-index: 1 !important;
         padding-bottom: 6px;
+      }
+
+      #${CONTAINER_ID}.claude-usage-docked::before {
+        content: '';
+        display: block;
+        align-self: stretch;
+        height: 1px;
+        margin: 0 var(--claude-usage-separator-right, 0px) 6px var(--claude-usage-separator-left, 0px);
+        background: var(--claude-usage-separator, hsl(var(--claude-usage-text-400) / 0.2));
       }
 
 
