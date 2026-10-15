@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Claude Usage Monitor
 // @namespace    claude-usage-monitor
-// @version      0.9.11
-// @description  Shows Claude usage limits, and any active usage credit, in a top-right indicator.
+// @version      1.0.0
+// @description  Shows Claude usage limits, and any active usage credit, in an indicator at the bottom of the sidebar.
 // @match        https://claude.ai/*
 // @run-at       document-idle
 // @grant        none
@@ -125,7 +125,11 @@
       left = Math.min(left, window.innerWidth - TOOLTIP_EDGE_GAP - width);
       left = Math.max(left, TOOLTIP_EDGE_GAP);
       tooltip.style.left = `${Math.round(left)}px`;
-      tooltip.style.top = `${Math.round(r.bottom + TOOLTIP_OFFSET)}px`;
+      const below = r.bottom + TOOLTIP_OFFSET;
+      const above = r.top - TOOLTIP_OFFSET - tooltip.offsetHeight;
+      const openAbove = below + tooltip.offsetHeight > window.innerHeight - TOOLTIP_EDGE_GAP && above >= TOOLTIP_EDGE_GAP;
+      tooltip.classList.toggle("claude-usage-tooltip-above", openAbove);
+      tooltip.style.top = `${Math.round(openAbove ? above : below)}px`;
       tooltip.style.setProperty("--claude-usage-arrow-right", `${Math.max(6, left + width - centre - 6)}px`);
     };
 
@@ -491,182 +495,71 @@
   }
 
   // --- Placement ---
-  // Always at the top. On Claude Code pages it sits inside the main pane's
-  // title bar, just before the icon group, so the row makes room for it.
-  // On new-chat and Claude Code home pages it's in the top row, just left of
-  // any top-right buttons. Elsewhere it's fixed top-right, just under the
-  // page header.
-  const DEFAULT_TOP = 52;
-  // Centre of the top row when there's no button to line up with.
-  const DEFAULT_ROW_CENTRE = 26;
-  const ROW_GAP = 8;
-
-  function isNewPage() {
-    return /^\/(new|code)?\/?$/.test(location.pathname);
-  }
+  // Bottom of the left sidebar, as a row just below the account row: the same
+  // spot on every claude.ai page (chat, Code, Design, ...), away from the
+  // page headers that keep changing. With the sidebar collapsed or missing it
+  // sits fixed in the bottom-left corner instead.
+  const CORNER_GAP = 12;
+  const SIDEBAR_WAIT_MS = 5000;
+  const startedAt = Date.now();
 
   function isShown(el) {
     const r = el.getBoundingClientRect();
     return r.width > 0 && r.height > 0;
   }
 
-  function findHeaderBottom() {
-    for (const el of document.querySelectorAll("header")) {
-      if (el.closest(`#${CONTAINER_ID}`) || !isShown(el)) continue;
-      const r = el.getBoundingClientRect();
-      if (r.top <= 8 && r.height <= 120 && r.right > window.innerWidth - 80) return r.bottom;
-    }
-    return null;
-  }
-
   function setPx(container, prop, value) {
     container.style.setProperty(prop, value === null ? "auto" : `${Math.round(value)}px`, "important");
   }
 
-  // Buttons in the page's top row (the sidebar's first row and any
-  // top-right buttons such as the incognito ghost).
-  function topRowButtons() {
-    return [...document.querySelectorAll("button, a[href]")].filter((el) => {
-      if (el.closest(`#${CONTAINER_ID}, #${LAYER_ID}`) || !isShown(el)) return false;
-      const r = el.getBoundingClientRect();
-      return r.top >= 0 && r.top < 60 && r.height < 60;
-    });
-  }
-
-  function placeInTopRow(container) {
-    const buttons = topRowButtons();
-    const right = buttons.filter((el) => el.getBoundingClientRect().left > window.innerWidth * 0.5);
-    const leftmost = right.sort((a, b) => a.getBoundingClientRect().left - b.getBoundingClientRect().left)[0];
-    const anchor = leftmost || buttons[0];
-    const a = anchor ? anchor.getBoundingClientRect() : null;
-    const centre = a ? a.top + a.height / 2 : DEFAULT_ROW_CENTRE;
-    setPx(container, "top", centre - container.getBoundingClientRect().height / 2);
-    setPx(container, "bottom", null);
-    if (leftmost) {
-      setPx(container, "right", window.innerWidth - a.left + ROW_GAP);
-    } else {
-      container.style.removeProperty("right");
-    }
-  }
-
-  // Claude Code title bars (session and project pages) are a flex row ending
-  // in an icon group pushed right with ml-auto. Claude Design's header is the
-  // same, but its icon group follows a flex-1 spacer. Pick the main pane's
-  // one: near the top, on the right half, and not in the project thread panel.
-  function findTitlebar() {
-    const groups = [
-      // ml-auto, or ms-auto (logical) since claude.ai's newer title bars.
-      ...document.querySelectorAll('[data-perf-region="header"] > :is(.ml-auto, .ms-auto, .epitaxy-titlebar-end)'),
-      ...document.querySelectorAll(":is(.ml-auto, .ms-auto).draggable-none"),
-      ...document.querySelectorAll('[data-testid="floating-card"] > div > .flex-1.min-w-0 ~ .shrink-0'),
-      // Chat conversation header: title, spacer, then the Share/actions slot.
-      ...document.querySelectorAll('[data-testid="chat-header"] > #dframe-header-actions-slot')
-    ];
-    for (const icons of groups) {
-      const bar = icons.parentElement;
-      if (!bar || bar.closest(`#${CONTAINER_ID}`)) continue;
-      if (icons.closest('[data-perf-region="side_panel"]')) continue;
-      if (!isShown(icons)) continue;
-      const r = icons.getBoundingClientRect();
-      if (r.top > 80 || r.right < window.innerWidth * 0.5) continue;
-      if (getComputedStyle(bar).display !== "flex") continue;
-      return { bar, icons };
+  // The sidebar's bottom tray (account row). Ignored when the sidebar is
+  // collapsed to a narrow rail.
+  function findSidebarTray() {
+    const trays = [...document.querySelectorAll("aside .df-bottom-tray"), ...document.querySelectorAll(".df-bottom-tray")];
+    for (const tray of trays) {
+      if (tray.closest(`#${CONTAINER_ID}`) || !isShown(tray)) continue;
+      if (tray.getBoundingClientRect().width < 160) continue;
+      return tray;
     }
     return null;
   }
 
-  // The icon group's own ml-auto/padding would leave a gap before it, so
-  // they're switched off while docked and restored after.
-  let dockedIcons = null;
-
-  function releaseIcons() {
-    if (dockedIcons) {
-      dockedIcons.style.removeProperty("margin-left");
-      dockedIcons.style.removeProperty("padding-left");
-    }
-    dockedIcons = null;
+  // Line the indicator's dot up with the start of the account row's content.
+  function trayInset(tray) {
+    const row = tray.querySelector(".df-footer-row") || tray.firstElementChild;
+    const first = row?.firstElementChild?.querySelector("img, svg, [class*='avatar']") || row?.firstElementChild;
+    if (!first) return 8;
+    return Math.max(0, first.getBoundingClientRect().left - tray.getBoundingClientRect().left);
   }
 
-  // Box around what's actually drawn in a button (icons and text), ignoring
-  // full-size backgrounds, so "Overview" counts as icon + text.
-  function contentRect(btn) {
-    const rects = [...btn.querySelectorAll("svg")].map((el) => el.getBoundingClientRect());
-    const walker = document.createTreeWalker(btn, NodeFilter.SHOW_TEXT);
-    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
-      if (!node.textContent.trim()) continue;
-      const range = document.createRange();
-      range.selectNodeContents(node);
-      rects.push(range.getBoundingClientRect());
-    }
-    const shown = rects.filter((r) => r.width > 0 && r.height > 0);
-    if (!shown.length) return btn.getBoundingClientRect();
-    return {
-      left: Math.min(...shown.map((r) => r.left)),
-      right: Math.max(...shown.map((r) => r.right))
-    };
-  }
-
-  // Gap so the space from the indicator's text to the first button's content
-  // matches the visible space between the first two buttons' content.
-  function iconSpacing(container, icons) {
-    const buttons = [...icons.querySelectorAll("button")].filter(isShown);
-    if (buttons.length < 2) return 8;
-    const [a, b] = buttons;
-    const visibleGap = contentRect(b).left - contentRect(a).right;
-    const insetBeforeFirst = contentRect(a).left - a.getBoundingClientRect().left;
-    const indicator = container.querySelector(".claude-usage-indicator");
-    const ownPadding = indicator ? parseFloat(getComputedStyle(indicator).paddingRight) || 0 : 0;
-    return Math.max(0, visibleGap - insetBeforeFirst - ownPadding);
-  }
-
-  function dockInTitlebar(container, { bar, icons }) {
-    if (container.parentElement !== bar || container.nextElementSibling !== icons) {
-      // Moving after it's been shown (e.g. a loading-stage title bar was
-      // replaced by the real one): hide and settle again rather than jump.
-      debugLog("docking into title bar", icons.getBoundingClientRect());
+  function dockInSidebar(container, tray) {
+    if (container.parentElement !== tray || container !== tray.lastElementChild) {
+      // Moving after it's been shown: hide and settle again rather than jump.
+      debugLog("docking into the sidebar", tray.getBoundingClientRect());
       setVisible(container, false);
       stableSignature = null;
-      bar.insertBefore(container, icons);
+      tray.appendChild(container);
     }
-    if (dockedIcons !== icons) {
-      releaseIcons();
-      icons.style.setProperty("margin-left", "0px");
-      icons.style.setProperty("padding-left", "0px");
-      dockedIcons = icons;
+    container.classList.add("claude-usage-docked");
+    const indicator = container.querySelector(".claude-usage-indicator");
+    const ownPadding = indicator ? parseFloat(getComputedStyle(indicator).paddingLeft) || 0 : 0;
+    container.style.setProperty("padding-left", `${Math.round(Math.max(0, trayInset(tray) - ownPadding))}px`, "important");
+    for (const prop of ["top", "bottom", "left", "right"]) setPx(container, prop, null);
+  }
+
+  function placeInCorner(container) {
+    if (container.parentElement !== document.body) {
+      debugLog("no sidebar, using the bottom-left corner");
+      setVisible(container, false);
+      stableSignature = null;
+      document.body.appendChild(container);
     }
-    // The row's own flex gap (e.g. gap-2 on the chat header) already sits
-    // between us and the icons, so take it off our margin.
-    const rowGap = parseFloat(getComputedStyle(bar).columnGap) || 0;
-    const margin = Math.max(0, iconSpacing(container, icons) - rowGap);
-    container.style.setProperty("margin-right", `${Math.round(margin)}px`, "important");
-    container.classList.add("claude-usage-docked", "draggable-none");
-    container.style.removeProperty("right");
+    container.classList.remove("claude-usage-docked");
+    container.style.removeProperty("padding-left");
+    setPx(container, "left", CORNER_GAP);
+    setPx(container, "bottom", CORNER_GAP);
     setPx(container, "top", null);
-    setPx(container, "bottom", null);
-  }
-
-  function undock(container) {
-    releaseIcons();
-    container.style.removeProperty("margin-right");
-    if (container.parentElement !== document.body) document.body.appendChild(container);
-    container.classList.remove("claude-usage-docked", "draggable-none");
-  }
-
-  // The title bar is built a moment after the page loads, and the spacing
-  // depends on text widths, which change once the web font loads. Stay hidden
-  // until both are ready; pages with no title bar show the fallback spot
-  // after a short wait.
-  const FALLBACK_DELAY_MS = 2500;
-  // Safety net in case the title bar markup changes and is never found.
-  const CODE_FALLBACK_DELAY_MS = 15000;
-  const startedAt = Date.now();
-
-  // Claude Code session and project pages and Claude Design always get a
-  // title bar, but a full reload can take a few seconds to build it, so wait
-  // much longer before the fallback spot. The Claude Code home page has none.
-  function fallbackDelay() {
-    const hasTitlebar = /^\/(code|design)(\/|$)/.test(location.pathname) && !isNewPage();
-    return hasTitlebar ? CODE_FALLBACK_DELAY_MS : FALLBACK_DELAY_MS;
+    setPx(container, "right", null);
   }
 
   // fonts.ready resolves as soon as nothing is downloading, which on a fresh
@@ -684,13 +577,13 @@
   function fontsSettled(container, icons) {
     if (!document.fonts) return true;
     if (document.fonts.status !== "loaded") return false;
-    const samples = [icons.querySelector("button") || icons, container.querySelector(".claude-usage-percent")];
+    const samples = [icons, container.querySelector(".claude-usage-percent")];
     return samples.every((el) => !el || fontLoaded(el));
   }
 
-  // On a full reload the page keeps shifting for a moment after the title
-  // bar appears (fonts, panels settling at their saved sizes), so only reveal
-  // once the indicator and icons have stayed put for a short while.
+  // On a full reload the page keeps shifting for a moment (fonts, panels
+  // settling at their saved sizes), so only reveal once the indicator and its
+  // anchor have stayed put for a short while.
   const STABLE_FOR_MS = 400;
   const DATA_WAIT_MS = 10000;
   let stableSignature = null;
@@ -707,7 +600,7 @@
 
   function layoutSignature(container, icons) {
     const c = container.getBoundingClientRect();
-    const i = icons.getBoundingClientRect();
+    const i = icons ? icons.getBoundingClientRect() : { left: 0, width: 0 };
     return [c.left, c.top, c.width, i.left, i.width].map(Math.round).join(",");
   }
 
@@ -773,29 +666,21 @@
   function updatePosition() {
     const container = document.getElementById(CONTAINER_ID);
     if (!container) return;
-    const titlebar = findTitlebar();
-    if (titlebar) {
-      dockInTitlebar(container, titlebar);
-      revealWhenSettled(container, titlebar.icons);
+    const tray = findSidebarTray();
+    if (tray) {
+      dockInSidebar(container, tray);
+      revealWhenSettled(container, tray);
       debugLogMovement(container);
       return;
     }
-    if (Date.now() - startedAt < fallbackDelay()) {
+    // On a fresh load the sidebar can take a moment to appear.
+    if (Date.now() - startedAt < SIDEBAR_WAIT_MS) {
       setVisible(container, false);
       return;
     }
-    if (container.parentElement !== document.body) debugLog("no title bar found, using fallback spot");
-    undock(container);
-    setVisible(container, true);
+    placeInCorner(container);
+    revealWhenSettled(container, null);
     debugLogMovement(container);
-    if (isNewPage()) {
-      placeInTopRow(container);
-      return;
-    }
-    container.style.removeProperty("right");
-    const headerBottom = findHeaderBottom();
-    setPx(container, "top", headerBottom === null ? DEFAULT_TOP : headerBottom + 8);
-    setPx(container, "bottom", null);
   }
 
   async function pollAndRender() {
@@ -1008,13 +893,17 @@
         border-bottom: 6px solid hsl(var(--claude-usage-bg));
       }
 
+      #${LAYER_ID} .claude-usage-tooltip.claude-usage-tooltip-above::after {
+        bottom: auto;
+        top: 100%;
+        border-bottom: 0;
+        border-top: 6px solid hsl(var(--claude-usage-bg));
+      }
+
       #${CONTAINER_ID}.claude-usage-docked {
         position: relative !important;
-        right: auto !important;
-        margin-left: auto;
-        margin-right: 4px;
-        flex-shrink: 0;
-        z-index: 50 !important;
+        z-index: 1 !important;
+        padding-bottom: 6px;
       }
 
 
