@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Claude Usage Monitor
 // @namespace    claude-usage-monitor
-// @version      1.0.0
+// @version      1.0.1
 // @description  Shows Claude usage limits, and any active usage credit, in an indicator at the bottom of the sidebar.
 // @match        https://claude.ai/*
 // @run-at       document-idle
@@ -495,7 +495,7 @@
   }
 
   // --- Placement ---
-  // Bottom of the left sidebar, as a row just below the account row: the same
+  // Bottom of the left sidebar, as a centred row just below the account row: the same
   // spot on every claude.ai page (chat, Code, Design, ...), away from the
   // page headers that keep changing. With the sidebar collapsed or missing it
   // sits fixed in the bottom-left corner instead.
@@ -524,13 +524,6 @@
     return null;
   }
 
-  // Line the indicator's dot up with the start of the account row's content.
-  function trayInset(tray) {
-    const row = tray.querySelector(".df-footer-row") || tray.firstElementChild;
-    const first = row?.firstElementChild?.querySelector("img, svg, [class*='avatar']") || row?.firstElementChild;
-    if (!first) return 8;
-    return Math.max(0, first.getBoundingClientRect().left - tray.getBoundingClientRect().left);
-  }
 
   function dockInSidebar(container, tray) {
     if (container.parentElement !== tray || container !== tray.lastElementChild) {
@@ -541,9 +534,6 @@
       tray.appendChild(container);
     }
     container.classList.add("claude-usage-docked");
-    const indicator = container.querySelector(".claude-usage-indicator");
-    const ownPadding = indicator ? parseFloat(getComputedStyle(indicator).paddingLeft) || 0 : 0;
-    container.style.setProperty("padding-left", `${Math.round(Math.max(0, trayInset(tray) - ownPadding))}px`, "important");
     for (const prop of ["top", "bottom", "left", "right"]) setPx(container, prop, null);
   }
 
@@ -555,7 +545,6 @@
       document.body.appendChild(container);
     }
     container.classList.remove("claude-usage-docked");
-    container.style.removeProperty("padding-left");
     setPx(container, "left", CORNER_GAP);
     setPx(container, "bottom", CORNER_GAP);
     setPx(container, "top", null);
@@ -902,6 +891,7 @@
 
       #${CONTAINER_ID}.claude-usage-docked {
         position: relative !important;
+        justify-content: center;
         z-index: 1 !important;
         padding-bottom: 6px;
       }
