@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Claude Usage Monitor
 // @namespace    claude-usage-monitor
-// @version      1.0.3
+// @version      1.0.4
 // @description  Shows Claude usage limits, and any active usage credit, in an indicator at the bottom of the sidebar.
 // @match        https://claude.ai/*
 // @run-at       document-idle
@@ -14,6 +14,11 @@
 
 (() => {
   "use strict";
+
+  // Claude Code's project file viewer is a claude.ai iframe. @noframes should
+  // keep the script out of it, but it doesn't cover every frame in every
+  // userscript manager, so check here too.
+  if (window.top !== window.self) return;
 
   const CONTAINER_ID = "claude-usage-userscript-container";
   const TOOLTIP_ID = "claude-usage-userscript-tooltip";
