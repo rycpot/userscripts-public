@@ -1,10 +1,11 @@
 // ==UserScript==
 // @name         Claude Usage Monitor
 // @namespace    claude-usage-monitor
-// @version      1.0.2
+// @version      1.0.3
 // @description  Shows Claude usage limits, and any active usage credit, in an indicator at the bottom of the sidebar.
 // @match        https://claude.ai/*
 // @run-at       document-idle
+// @noframes
 // @grant        none
 // @icon         https://claude.ai/favicon.ico
 // @downloadURL  https://raw.githubusercontent.com/rycpot/userscripts-public/main/claude-usage-monitor.user.js
