@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         YouTube Comment Search
 // @namespace    https://tampermonkey.net/
-// @version      2.2.3
+// @version      2.2.4
 // @description  Adds a search box to a video's comment section (Cmd+S / Ctrl+S jumps to it). Uses your own YouTube Data API key. Highlights matches, expands reply threads, makes timestamps clickable, and supports /regex/, :creator and global: (whole channel).
 // @author       you
 // @icon         https://www.gstatic.com/youtube/img/branding/favicon/favicon_144x144.png
@@ -495,6 +495,11 @@
   const PAGE_CSS = `
     ytd-comments.ytcs-active #sections > #contents,
     ytd-comments.ytcs-active #sections > #continuations { display: none !important; }
+    /* A search with few or no results makes the page much shorter, and the
+       browser then scrolls back up towards the video (which also closes a
+       scroll-triggered mini player). Keep at least a window's worth of room
+       below the top bar so the scroll position holds. */
+    ytd-comments.ytcs-active ytcs-search { min-height: calc(100vh - var(--ytd-masthead-height, 56px)); }
     ytd-comments.ytcs-inline:not(.ytcs-show-simplebox) ytd-comments-header-renderer #simple-box { display: none !important; }
     ytd-comments.ytcs-inline:not(.ytcs-show-simplebox) ytd-comments-header-renderer { margin-bottom: 0 !important; }
   `;
