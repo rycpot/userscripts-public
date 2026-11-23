@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Reddit Restore Deleted Posts & Comments
 // @namespace    https://github.com/rycpot/userscripts-public
-// @version      1.2.0
+// @version      2
 // @description  On new Reddit (www.reddit.com), fills deleted or removed posts and comments back into their original spots using the Arctic Shift archive. Also restores comments that load later ("more replies", "continue thread").
 // @author       you
 // @icon         https://www.reddit.com/favicon.ico
@@ -99,10 +99,22 @@
     .rdr-box table { border-collapse: collapse; margin: .4em 0; }
     .rdr-box th, .rdr-box td { border: 1px solid rgba(127,127,127,.4); padding: 2px 6px; }
     .rdr-missing { font-style: italic; opacity: .75; }
-    .rdr-author { color: ${ACCENT} !important; font-weight: 600; text-decoration: none; }
+    .rdr-author { text-decoration: none; }
+    .rdr-author.rdr-author-plain { color: inherit; font-weight: 600; }
     .rdr-author:hover { text-decoration: underline; }
-    .rdr-title { color: ${ACCENT}; }
     .rdr-hidden-original { display: none !important; }
+    /* Restored text: no frame, no label; looks like a normal comment/post. */
+    .rdr-box.rdr-plain { border: 0; background: none; padding: 0; margin: 4px 0;
+      border-radius: 0; font-size: inherit; line-height: inherit; }
+    .rdr-box.rdr-plain a { color: inherit; text-decoration: underline; }
+    /* The only tell: a small dot out in the empty space to the right. */
+    .rdr-dot { position: absolute; top: 14px; left: calc(100% + 40px); width: 8px; height: 8px;
+      border-radius: 50%; background: #ff4500; opacity: .8; z-index: 5; cursor: pointer;
+      display: block; padding: 0; border: 0; }
+    .rdr-dot.rdr-dot-inside { left: auto; right: 4px; }
+    .rdr-dot.rdr-dot-missing { background: transparent; box-shadow: inset 0 0 0 1.5px #8a9ba1; opacity: .7; }
+    .rdr-dot.rdr-dot-loading { background: #8a9ba1; opacity: .5; animation: rdr-pulse 1s ease-in-out infinite alternate; }
+    @keyframes rdr-pulse { from { opacity: .2; } to { opacity: .7; } }
   `;
   (document.head || document.documentElement).appendChild(style);
 
@@ -436,24 +448,6 @@
     return `${API}/${kind}/ids?ids=${id}`;
   }
 
-  function buildBox(labelText, body, archiveUrl, when) {
-    const label = el('div', { class: 'rdr-label' }, labelText);
-    if (when) label.appendChild(document.createTextNode(' · ' + when));
-    if (archiveUrl) {
-      label.appendChild(document.createTextNode(' · '));
-      label.appendChild(el('a', { href: archiveUrl, target: '_blank', rel: 'noopener noreferrer' }, 'source'));
-    }
-    const box = el('div', { class: 'rdr-box md' }, label);
-    if (body) box.appendChild(body);
-    // Keep clicks on restored links from toggling/collapsing the comment.
-    box.addEventListener('click', (e) => e.stopPropagation());
-    return box;
-  }
-
-  function missingNote(text) {
-    return el('p', { class: 'rdr-missing' }, text);
-  }
-
   function formatDate(utc) {
     if (!utc) return '';
     try {
@@ -466,14 +460,119 @@
     return !!t && !isDeletedText(t) && t !== '[ Removed by Reddit ]';
   }
 
-  function authorLink(name) {
+  // Borrow Reddit's own classes from a live (not deleted) element on the page,
+  // so restored text and names pick up exactly the same font and colors.
+  function liveClass(selector, fallback) {
+    for (const n of document.querySelectorAll(selector)) {
+      if (n.closest('.rdr-box')) continue;
+      const c = n.closest('shreddit-comment');
+      if (c && (isDeletedName(c.getAttribute('author')) || c.hasAttribute('is-comment-deleted'))) continue;
+      if (n.className && typeof n.className === 'string') return n.className;
+    }
+    return fallback;
+  }
+
+  const LIVE_BODY_SEL = '[id$="-comment-rtjson-content"], shreddit-comment [slot="comment"]';
+  function bodyClass() {
+    return liveClass(LIVE_BODY_SEL, 'md');
+  }
+
+  // A plain container for restored text, styled like a live comment body.
+  function plainBox() {
+    const box = el('div', { class: bodyClass() + ' rdr-box rdr-plain' });
+    for (const n of document.querySelectorAll(LIVE_BODY_SEL)) {
+      const c = n.closest('shreddit-comment');
+      if (n.closest('.rdr-box') || (c && (c.hasAttribute('is-comment-deleted') || isDeletedName(c.getAttribute('author'))))) continue;
+      const cs = getComputedStyle(n);
+      box.style.color = cs.color;
+      box.style.fontSize = cs.fontSize;
+      box.style.lineHeight = cs.lineHeight;
+      break;
+    }
+    box.addEventListener('click', (e) => e.stopPropagation());
+    return box;
+  }
+
+  function authorLink(name, prefix) {
+    const cls = liveClass('shreddit-comment faceplate-tracker[noun="comment_author"] a, shreddit-comment a[href^="/user/"]', '');
     return el('a', {
-      class: 'rdr-author',
+      class: cls ? cls + ' rdr-author' : 'rdr-author rdr-author-plain',
       href: `https://www.reddit.com/user/${encodeURIComponent(name)}/`,
       target: '_blank',
       rel: 'noopener noreferrer',
-      title: 'Restored from Arctic Shift',
-    }, 'u/' + name);
+    }, (prefix || '') + name);
+  }
+
+  // The marker. kind: 'restored' | 'missing' | 'loading' | 'error'.
+  function setDot(host, kind, tip, href) {
+    // Inside a shadow root (older Reddit builds) an unslotted child would not render.
+    const parent = host.shadowRoot || host;
+    let dot = [...parent.children].find((c) => c.classList.contains('rdr-dot'));
+    if (!dot) {
+      dot = el('a', { class: 'rdr-dot', target: '_blank', rel: 'noopener noreferrer' });
+      dot.addEventListener('click', (e) => e.stopPropagation());
+      if (getComputedStyle(host).position === 'static') host.style.position = 'relative';
+      if (host.shadowRoot) ensureShadowStyle(host.shadowRoot);
+      parent.appendChild(dot);
+    }
+    dot.className = 'rdr-dot' + (kind === 'restored' ? '' : kind === 'loading' ? ' rdr-dot-loading' : ' rdr-dot-missing');
+    dot.title = tip;
+    if (href) dot.href = href; else dot.removeAttribute('href');
+    afterLayout(() => {
+      // If a parent clips the margin, pull the dot inside the comment's right edge.
+      if (dot.isConnected && isClipped(dot)) dot.classList.add('rdr-dot-inside');
+    });
+    return dot;
+  }
+
+  function isClipped(node) {
+    const r = node.getBoundingClientRect();
+    if (!r.width) return true;
+    if (r.right > document.documentElement.clientWidth) return true;
+    for (let a = node.parentElement; a && a !== document.body; a = a.parentElement) {
+      const cs = getComputedStyle(a);
+      if (cs.overflowX !== 'visible' || cs.overflow !== 'visible') {
+        const ar = a.getBoundingClientRect();
+        if (r.right > ar.right || r.left < ar.left) return true;
+      }
+    }
+    return false;
+  }
+
+  // Swap Reddit's grey default avatar for the user's real one, if they still exist.
+  const avatarCache = new Map();
+  function restoreAvatar(scopeNodes, name) {
+    const img = scopeNodes.find((n) => /redditstatic\.com|avatar_default|snoo/i.test(n.currentSrc || n.src || ''));
+    if (!img || !name) return;
+    if (!avatarCache.has(name)) {
+      avatarCache.set(name, fetch(`/user/${encodeURIComponent(name)}/about.json`, { credentials: 'omit' })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((j) => {
+          const d = j && j.data;
+          const u = d && (d.snoovatar_img || d.icon_img);
+          return u ? decodeEntities(u) : null;
+        })
+        .catch(() => null));
+    }
+    avatarCache.get(name).then((u) => {
+      if (u && /^https:\/\//.test(u)) { img.removeAttribute('srcset'); img.src = u; }
+    });
+  }
+
+  // Deleted comments get greyed-out vote/reply buttons; give them the normal color.
+  function undimActions(comment) {
+    let ref = null;
+    for (const c of document.querySelectorAll('shreddit-comment')) {
+      if (c.hasAttribute('is-comment-deleted') || isDeletedName(c.getAttribute('author'))) continue;
+      ref = own(c, 'button:not([disabled])')[0];
+      if (ref) break;
+    }
+    if (!ref) return;
+    const color = getComputedStyle(ref).color;
+    own(comment, 'button[disabled], button[aria-disabled="true"]').forEach((b) => {
+      b.style.color = color;
+      b.style.opacity = '1';
+    });
   }
 
   // If an element ended up unslotted (not rendered), it has no boxes.
@@ -498,7 +597,7 @@
         if (c.children.length > 2) continue;
         const t = (c.textContent || '').trim();
         if (t === '[deleted]' || t === 'u/[deleted]' || t === '[removed]' || t === 'Deleted' || t === 'deleted') {
-          c.replaceWith(authorLink(name));
+          c.replaceWith(authorLink(name, t.startsWith('u/') || !owner ? 'u/' : ''));
           return true;
         }
       }
@@ -538,6 +637,16 @@
       return ![...n.children].some((k) => isDeletedText(k.textContent));
     });
     return hits;
+  }
+
+  // Climb from the deleted-text element to the outermost wrapper that holds
+  // nothing else, so the restored text doesn't inherit its greyed-out styling.
+  function deletedWrapper(comment, n) {
+    const text = (n.textContent || '').trim();
+    while (n.parentElement && n.parentElement.closest('shreddit-comment') === comment
+      && !n.parentElement.matches('details, shreddit-comment')
+      && (n.parentElement.textContent || '').trim() === text) n = n.parentElement;
+    return n;
   }
 
   function attrOn(node, name) {
@@ -586,48 +695,42 @@
     if (!state.bodyGone && !state.authorGone) return;
     comment.setAttribute(MARK, 'loading');
 
-    let loading = null;
-    if (state.bodyGone) {
-      loading = buildBox('Restoring from archive…', null);
-      placeCommentBox(comment, state.body, loading, false);
-      expandComment(comment);
-    }
+    expandComment(comment);
+    setDot(comment, 'loading', 'Looking this comment up in the Arctic Shift archive…');
 
     const item = await fetchComment(id);
-    if (loading) { loading._rdrDead = true; loading.remove(); }
     if (!comment.isConnected) { comment.removeAttribute(MARK); return; }
+    const src = permalinkFor('comments', id);
 
     if (item === undefined) {
       comment.setAttribute(MARK, 'error');
-      if (state.bodyGone) {
-        const box = buildBox('Archive', missingNote('Arctic Shift did not respond. Reload the page to try again.'));
-        placeCommentBox(comment, state.body, box, false);
-      }
+      setDot(comment, 'error', 'Arctic Shift did not respond. Reload the page to try again.');
+      return;
+    }
+    if (!item) {
+      comment.setAttribute(MARK, 'missing');
+      setDot(comment, 'missing', 'Deleted comment: not found in the Arctic Shift archive.', src);
       return;
     }
 
     comment.setAttribute(MARK, 'done');
-    if (state.authorGone && item && item.author) {
-      restoreAuthorIn([directChild(comment, '[slot="commentMeta"]'), comment], item.author, comment);
+    const name = item.author && !isDeletedName(item.author) ? item.author : '';
+    if (state.authorGone && name) {
+      restoreAuthorIn([directChild(comment, '[slot="commentMeta"]'), comment], name, comment);
+      restoreAvatar(own(comment, 'img'), name);
     }
-    if (!state.bodyGone) return;
-
-    let body;
-    let label = 'Restored comment';
-    if (!item) {
-      body = missingNote('Not found in the Arctic Shift archive.');
-      label = 'Archive';
-    } else if (!bodyIsUseful(item.body)) {
-      body = missingNote('The archive only captured this comment after it was deleted.');
-      label = 'Archive';
-    } else {
-      body = renderMarkdown(item.body);
-      if (item.author && !isDeletedName(item.author)) {
-        label = 'Restored comment by u/' + item.author;
-      }
+    const when = formatDate(item.created_utc);
+    const useful = bodyIsUseful(item.body);
+    if (state.bodyGone && useful) {
+      const box = plainBox();
+      box.appendChild(renderMarkdown(item.body));
+      placeCommentBox(comment, state.body, box, true);
+      undimActions(comment);
     }
-    const box = buildBox(label, body, permalinkFor('comments', id), item && formatDate(item.created_utc));
-    placeCommentBox(comment, state.body, box, !!(item && bodyIsUseful(item.body)));
+    const what = state.bodyGone && !useful
+      ? 'Deleted comment: the archive only saw it after it was deleted.'
+      : `Restored from Arctic Shift${name ? ' · u/' + name : ''}${when ? ' · ' + when : ''}`;
+    setDot(comment, state.bodyGone && !useful ? 'missing' : 'restored', what, src);
   }
 
   // Is the box actually on screen at a usable size? (A box dropped into a
@@ -668,7 +771,7 @@
     spots.push(['light-deleted', () => {
       const n = lightDeletedNodes(comment)[0];
       if (!n) return false;
-      n.after(box);
+      deletedWrapper(comment, n).after(box);
       return true;
     }]);
     spots.push(['light-slot', () => {
@@ -732,7 +835,7 @@
       for (const c of bodyNode.children) if (c !== box && !c.classList.contains('rdr-box')) c.classList.add('rdr-hidden-original');
     }
     shadowDeletedNodes(comment).forEach((n) => { n.style.display = 'none'; });
-    lightDeletedNodes(comment).forEach((n) => n.classList.add('rdr-hidden-original'));
+    lightDeletedNodes(comment).forEach((n) => deletedWrapper(comment, n).classList.add('rdr-hidden-original'));
   }
 
   // ---------------------------------------------------------------- posts
@@ -772,30 +875,33 @@
       item = await fetchPost(id);
     } catch (e) {
       console.warn('[Restore Deleted] post fetch failed:', e);
-      if (state.bodyGone) placePostBox(post, state, buildBox('Archive', missingNote('Arctic Shift did not respond. Reload the page to try again.')));
+      setDot(post, 'error', 'Arctic Shift did not respond. Reload the page to try again.');
       post.removeAttribute(MARK);
       return;
     }
     if (!post.isConnected) return;
+    const src = permalinkFor('posts', id);
 
     if (!item) {
-      if (state.bodyGone) placePostBox(post, state, buildBox('Archive', missingNote('This post is not in the Arctic Shift archive.')));
+      setDot(post, 'missing', 'Removed post: not found in the Arctic Shift archive.', src);
       return;
     }
 
-    if (state.authorGone && item.author) {
+    if (state.authorGone && item.author && !isDeletedName(item.author)) {
       restoreAuthorIn([post.querySelector('[slot="credit-bar"]'), post], item.author, null);
+      restoreAvatar([...post.querySelectorAll('img')], item.author);
     }
 
     if (state.titleGone && item.title && !isDeletedText(item.title)) {
       const h = post.querySelector('[slot="title"]');
       if (h) {
         h.textContent = decodeEntities(item.title);
-        h.classList.add('rdr-title');
       }
     }
 
-    if (!state.bodyGone) return;
+    const by = item.author && !isDeletedName(item.author) ? ' · u/' + item.author : '';
+    const tip = `Restored from Arctic Shift${by} · ${formatDate(item.created_utc)}`;
+    if (!state.bodyGone) { setDot(post, 'restored', tip, src); return; }
     const body = document.createDocumentFragment();
     let useful = false;
     if (bodyIsUseful(item.selftext)) {
@@ -804,7 +910,7 @@
     }
     const url = item.url ? decodeEntities(item.url) : '';
     if (url && !item.is_self && !/reddit\.com\/r\/[^/]+\/comments\//i.test(url)) {
-      const p = el('p', null, ['Link: ', link(url, url, true)]);
+      const p = el('p', null, [link(url, url, true)]);
       body.appendChild(p);
       if (/\.(jpe?g|png|gif|webp)(\?|$)/i.test(url) || /^https?:\/\/i\.redd\.it\//i.test(url)) {
         const img = el('img', { src: url, alt: '', referrerpolicy: 'no-referrer' });
@@ -813,9 +919,14 @@
       }
       useful = true;
     }
-    if (!useful) body.appendChild(missingNote('The archive only captured this post after it was deleted, or it had no text.'));
-    const by = item.author && !isDeletedName(item.author) ? ' by u/' + item.author : '';
-    placePostBox(post, state, buildBox('Restored post' + by, body, permalinkFor('posts', id), formatDate(item.created_utc)));
+    if (!useful) {
+      setDot(post, 'missing', 'Removed post: the archive only saw it after it was removed, or it had no text.', src);
+      return;
+    }
+    const box = plainBox();
+    box.appendChild(body);
+    placePostBox(post, state, box);
+    setDot(post, 'restored', tip, src);
   }
 
   function placePostBox(post, state, box) {
@@ -825,6 +936,7 @@
     if (state.banner) {
       box.setAttribute('slot', state.banner.getAttribute('slot'));
       state.banner.after(box);
+      state.banner.classList.add('rdr-hidden-original');
     } else if (state.textBody) {
       box.setAttribute('slot', 'text-body');
       state.textBody.after(box);
@@ -862,7 +974,7 @@
     for (const m of muts) {
       if (m.type === 'childList' && m.addedNodes.length) {
         for (const n of m.addedNodes) {
-          if (n.nodeType === 1 && !(n.classList && n.classList.contains('rdr-box'))) { queueScan(); return; }
+          if (n.nodeType === 1 && !(n.classList && (n.classList.contains('rdr-box') || n.classList.contains('rdr-dot')))) { queueScan(); return; }
         }
       } else if (m.type === 'attributes') { queueScan(); return; }
     }
