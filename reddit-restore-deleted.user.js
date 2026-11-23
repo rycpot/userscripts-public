@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Reddit Restore Deleted Posts & Comments
 // @namespace    https://github.com/rycpot/userscripts-public
-// @version      4
+// @version      5
 // @description  On new Reddit (www.reddit.com), fills deleted or removed posts and comments back into their original spots using the Arctic Shift archive. Also restores comments that load later ("more replies", "continue thread").
 // @author       you
 // @icon         https://www.reddit.com/favicon.ico
@@ -11,6 +11,7 @@
 // @grant        GM_registerMenuCommand
 // @grant        GM_setClipboard
 // @connect      arctic-shift.photon-reddit.com
+// @connect      old.reddit.com
 // @run-at       document-idle
 // @downloadURL  https://raw.githubusercontent.com/rycpot/userscripts-public/main/reddit-restore-deleted.user.js
 // @updateURL    https://raw.githubusercontent.com/rycpot/userscripts-public/main/reddit-restore-deleted.user.js
@@ -108,7 +109,7 @@
       border-radius: 0; font-size: inherit; line-height: inherit; }
     .rdr-box.rdr-plain a { color: inherit; text-decoration: underline; }
     /* The only tell: a small dot out in the empty space to the right. */
-    .rdr-dot { position: absolute; top: 14px; left: calc(100% + 40px); width: 8px; height: 8px;
+    .rdr-dot { position: absolute; top: 14px; left: calc(100% + 80px); width: 8px; height: 8px;
       border-radius: 50%; background: #ff4500; opacity: .8; z-index: 5; cursor: pointer;
       display: block; padding: 0; border: 0; }
     .rdr-dot.rdr-dot-inside { left: auto; right: 4px; }
@@ -539,23 +540,76 @@
     return false;
   }
 
-  // Swap Reddit's grey default avatar for the user's real one, if they still exist.
+  // Swap Reddit's grey default avatar for the user's current one.
+  // Reddit draws the default as <svg><image href=".../snoovatar-back-64x64px.png">.
+  const DEFAULT_AVATAR = /snoovatar-back|avatar_default|redditstatic\.com\/(avatars|shreddit\/assets)/i;
   const avatarCache = new Map();
-  function restoreAvatar(scopeNodes, name) {
-    const img = scopeNodes.find((n) => /redditstatic\.com|avatar_default|snoo/i.test(n.currentSrc || n.src || ''));
-    if (!img || !name) return;
-    if (!avatarCache.has(name)) {
-      avatarCache.set(name, fetch(`/user/${encodeURIComponent(name)}/about.json`, { credentials: 'omit' })
-        .then((r) => (r.ok ? r.json() : null))
-        .then((j) => {
-          const d = j && j.data;
-          const u = d && (d.snoovatar_img || d.icon_img);
-          return u ? decodeEntities(u) : null;
-        })
-        .catch(() => null));
-    }
+
+  function avatarUrlFromJson(text) {
+    try {
+      const d = JSON.parse(text).data;
+      const u = d && (d.snoovatar_img || d.icon_img);
+      return u ? decodeEntities(u) : null;
+    } catch (e) { return null; }
+  }
+
+  // Ways to get the profile picture, tried in order:
+  //  1. www.reddit.com/user/NAME/about.json with your session (same origin);
+  //  2. old.reddit.com's about.json (still serves JSON);
+  //  3. the profile page itself, picking the avatar URL out of its HTML.
+  async function lookupAvatar(name) {
+    const enc = encodeURIComponent(name);
+    try {
+      const r = await fetch(`/user/${enc}/about.json`, { credentials: 'include', headers: { Accept: 'application/json' } });
+      if (r.ok && /json/.test(r.headers.get('content-type') || '')) {
+        const u = avatarUrlFromJson(await r.text());
+        if (u) { log('avatar via about.json', name); return u; }
+      }
+    } catch (e) { /* try the next way */ }
+    try {
+      const r = await gmGet(`https://old.reddit.com/user/${enc}/about.json`);
+      if (r.status === 200) {
+        const u = avatarUrlFromJson(r.responseText);
+        if (u) { log('avatar via old.reddit', name); return u; }
+      }
+    } catch (e) { /* try the next way */ }
+    try {
+      const r = await fetch(`/user/${enc}/`, { credentials: 'include' });
+      if (r.ok) {
+        const html = await r.text();
+        const m = /https:\/\/(?:i\.redd\.it\/snoovatar\/avatars\/[^"'\s<>]+|styles\.redditmedia\.com\/t5_[^"'\s<>]+?\/styles\/profileIcon_[^"'\s<>]+)/.exec(html);
+        if (m) { log('avatar via profile page', name); return decodeEntities(m[0]); }
+      }
+    } catch (e) { /* give up */ }
+    log('no avatar found', name);
+    return null;
+  }
+
+  function restoreAvatar(scope, name, owner) {
+    if (!name) return;
+    const node = [...scope.querySelectorAll('image, img')].find((n) =>
+      (owner === undefined || n.closest('shreddit-comment') === owner)
+      && DEFAULT_AVATAR.test(n.getAttribute('href') || n.getAttribute('xlink:href') || n.getAttribute('src') || ''));
+    if (!node) return;
+    if (!avatarCache.has(name)) avatarCache.set(name, lookupAvatar(name));
     avatarCache.get(name).then((u) => {
-      if (u && /^https:\/\//.test(u)) { img.removeAttribute('srcset'); img.src = u; }
+      if (!u || !/^https:\/\//.test(u) || !node.isConnected) return;
+      if (node.tagName.toLowerCase() === 'img') {
+        node.removeAttribute('srcset');
+        node.src = u;
+        return;
+      }
+      // SVG <image>: this is exactly how Reddit draws a snoovatar, so just swap the picture.
+      if (/snoovatar/i.test(u)) {
+        node.setAttribute('href', u);
+        node.setAttribute('alt', name);
+        return;
+      }
+      // A plain profile icon: replace the drawn avatar with a round picture of the same size.
+      const box = node.closest('.fp-avatar-container') || node.closest('svg').parentElement;
+      const img = el('img', { src: u, alt: name, referrerpolicy: 'no-referrer' });
+      img.style.cssText = 'width:100%;height:100%;border-radius:9999px;object-fit:cover;display:block';
+      box.replaceChildren(img);
     });
   }
 
@@ -717,7 +771,7 @@
     const name = item.author && !isDeletedName(item.author) ? item.author : '';
     if (state.authorGone && name) {
       restoreAuthorIn([directChild(comment, '[slot="commentMeta"]'), comment], name, comment);
-      restoreAvatar(own(comment, 'img'), name);
+      restoreAvatar(comment, name, comment);
     }
     const when = formatDate(item.created_utc);
     const useful = bodyIsUseful(item.body);
@@ -889,7 +943,7 @@
 
     if (state.authorGone && item.author && !isDeletedName(item.author)) {
       restoreAuthorIn([post.querySelector('[slot="credit-bar"]'), post], item.author, null);
-      restoreAvatar([...post.querySelectorAll('img')], item.author);
+      restoreAvatar(post, item.author);
     }
 
     if (state.titleGone && item.title && !isDeletedText(item.title)) {
