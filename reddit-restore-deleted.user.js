@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Reddit Restore Deleted Posts & Comments
 // @namespace    https://github.com/rycpot/userscripts-public
-// @version      1.1.0
+// @version      1.2.0
 // @description  On new Reddit (www.reddit.com), fills deleted or removed posts and comments back into their original spots using the Arctic Shift archive. Also restores comments that load later ("more replies", "continue thread").
 // @author       you
 // @icon         https://www.reddit.com/favicon.ico
@@ -513,11 +513,36 @@
     return null;
   }
 
-  // The light-DOM element Reddit slots in as the comment text. Deleted
-  // comments often have none: their "Comment deleted by user" line is drawn
-  // inside the comment's shadow DOM instead.
+  // Elements that belong to this comment, not to a nested reply.
+  function own(comment, selector) {
+    return [...comment.querySelectorAll(selector)].filter((n) => n.closest('shreddit-comment') === comment);
+  }
+
+  // Reddit (late 2026) renders comments without shadow DOM: a light-DOM
+  // <details> holds the header and the text. Older builds slotted a
+  // [slot="comment"] element into a shadow root. Handle both.
   function commentBodyNode(comment) {
-    return directChild(comment, '[slot="comment"]');
+    return own(comment, '[slot="comment"], [id$="-comment-rtjson-content"]')[0] || null;
+  }
+
+  const HEADER_SEL = 'summary, [slot="commentMeta"], faceplate-tracker, faceplate-hovercard, a, time, .rdr-box';
+
+  // Deepest light-DOM elements of this comment whose text is a deleted message
+  // ("Comment deleted by user", "[removed]", ...), excluding the author label.
+  function lightDeletedNodes(comment) {
+    const hits = own(comment, 'p, div, span').filter((n) => {
+      if (n.closest(HEADER_SEL)) return false;
+      const t = (n.textContent || '').trim();
+      // A bare "[deleted]" is the author label, not the comment text.
+      if (!isDeletedText(t) || /^\[deleted\]/i.test(t)) return false;
+      return ![...n.children].some((k) => isDeletedText(k.textContent));
+    });
+    return hits;
+  }
+
+  function attrOn(node, name) {
+    const v = node.getAttribute(name);
+    return v !== null && v !== 'false';
   }
 
   // Text of the comment's shadow DOM, minus slotted content.
@@ -527,23 +552,26 @@
 
   function commentState(comment) {
     const authorAttr = comment.getAttribute('author');
-    const authorGone = comment.getAttribute('is-author-deleted') === 'true'
+    const authorGone = attrOn(comment, 'is-author-deleted')
       || (authorAttr !== null && isDeletedName(authorAttr));
-    const flagged = comment.hasAttribute('deleted')
-      || comment.getAttribute('is-comment-deleted') === 'true'
-      || comment.getAttribute('is-comment-removed') === 'true'
-      || comment.hasAttribute('removed');
+    // These are boolean attributes: present (often with an empty value) = true.
+    const flagged = attrOn(comment, 'deleted')
+      || attrOn(comment, 'is-comment-deleted')
+      || attrOn(comment, 'is-comment-removed')
+      || attrOn(comment, 'removed');
     const body = commentBodyNode(comment);
     const bodyText = body ? body.textContent : '';
     const shadowSaysDeleted = /comment (deleted|removed)|\[(deleted|removed)\]/i.test(shadowText(comment));
-    const bodyGone = flagged || isDeletedText(bodyText) || (!body && (authorGone || shadowSaysDeleted))
+    const bodyGone = flagged || isDeletedText(bodyText) || lightDeletedNodes(comment).length > 0
+      || (!body && (authorGone || shadowSaysDeleted))
       || (!!body && !bodyText.trim() && authorGone);
     return { authorGone, bodyGone, body };
   }
 
   function expandComment(comment) {
     if (comment.hasAttribute('collapsed')) comment.removeAttribute('collapsed');
-    const details = comment.shadowRoot && comment.shadowRoot.querySelector('details');
+    const details = directChild(comment, 'details')
+      || (comment.shadowRoot && comment.shadowRoot.querySelector('details'));
     if (details && !details.open) details.open = true;
   }
 
@@ -551,7 +579,7 @@
     if (comment.hasAttribute(MARK)) return;
     const thing = comment.getAttribute('thingid') || '';
     const id = thing.replace(/^t1_/, '');
-    if (!/^[a-z0-9]{1,10}$/i.test(id)) return;
+    if (!/^[a-z0-9]{1,24}$/i.test(id)) return; // new ids are 13+ chars
     comment.setAttribute(MARK, 'checked');
 
     const state = commentState(comment);
@@ -628,7 +656,7 @@
 
   // Try each spot in turn until the box is visibly rendered.
   function placeCommentBox(comment, bodyNode, box, hideOriginal) {
-    comment.querySelectorAll(':scope > .rdr-box, :scope > [slot] > .rdr-box').forEach((b) => { if (b !== box) b.remove(); });
+    own(comment, '.rdr-box').forEach((b) => { if (b !== box) b.remove(); });
     if (comment.shadowRoot) comment.shadowRoot.querySelectorAll('.rdr-box').forEach((b) => { if (b !== box) b.remove(); });
     if (comment.nextElementSibling && comment.nextElementSibling.classList.contains('rdr-box') && comment.nextElementSibling !== box) {
       comment.nextElementSibling.remove();
@@ -637,6 +665,12 @@
     const meta = () => directChild(comment, '[slot="commentMeta"]');
     const spots = [];
     if (bodyNode) spots.push(['light-body', () => bodyNode.isConnected && (bodyNode.appendChild(box), true)]);
+    spots.push(['light-deleted', () => {
+      const n = lightDeletedNodes(comment)[0];
+      if (!n) return false;
+      n.after(box);
+      return true;
+    }]);
     spots.push(['light-slot', () => {
       box.setAttribute('slot', 'comment');
       const m = meta();
@@ -698,6 +732,7 @@
       for (const c of bodyNode.children) if (c !== box && !c.classList.contains('rdr-box')) c.classList.add('rdr-hidden-original');
     }
     shadowDeletedNodes(comment).forEach((n) => { n.style.display = 'none'; });
+    lightDeletedNodes(comment).forEach((n) => n.classList.add('rdr-hidden-original'));
   }
 
   // ---------------------------------------------------------------- posts
@@ -835,7 +870,7 @@
     childList: true,
     subtree: true,
     attributes: true,
-    attributeFilter: ['thingid', 'deleted', 'is-comment-deleted', 'post-title', 'author'],
+    attributeFilter: ['thingid', 'deleted', 'is-comment-deleted', 'is-author-deleted', 'post-title', 'author'],
   });
 
   // Reddit is a single-page app; re-scan on navigation too.
