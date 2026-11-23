@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Reddit Restore Deleted Posts & Comments
 // @namespace    https://github.com/rycpot/userscripts-public
-// @version      5
+// @version      6
 // @description  On new Reddit (www.reddit.com), fills deleted or removed posts and comments back into their original spots using the Arctic Shift archive. Also restores comments that load later ("more replies", "continue thread").
 // @author       you
 // @icon         https://www.reddit.com/favicon.ico
@@ -613,6 +613,38 @@
     });
   }
 
+  // Live comments link their "1mo ago" time to the comment's permalink;
+  // deleted ones don't. Add the same link, styled like a live one.
+  function commentPermalink(comment, id) {
+    const own = comment.getAttribute('permalink');
+    if (own) return own;
+    const m = location.pathname.match(/^\/r\/([^/]+)\/comments\/([a-z0-9]+)/i);
+    return m ? `/r/${m[1]}/comments/${m[2]}/comment/${id}/` : null;
+  }
+
+  function linkTime(comment, id) {
+    const href = commentPermalink(comment, id);
+    if (!href) return;
+    const t = own(comment, 'faceplate-timeago, time').find((n) => !n.parentElement.closest('faceplate-timeago'));
+    if (!t || t.closest('a')) return;
+    let cls = '';
+    for (const c of document.querySelectorAll('shreddit-comment')) {
+      if (c === comment || c.hasAttribute('is-comment-deleted') || isDeletedName(c.getAttribute('author'))) continue;
+      const a = own(c, 'a').find((x) => x.querySelector('faceplate-timeago, time'));
+      if (a) { cls = a.className; break; }
+    }
+    const a = el('a', { href, class: cls });
+    if (!cls) a.style.cssText = 'color:inherit;text-decoration:none';
+    t.replaceWith(a);
+    a.appendChild(t);
+    const created = comment.getAttribute('created');
+    if (created && !a.title && !t.getAttribute('title')) {
+      const d = new Date(created);
+      // Same format as Reddit's own tooltip, e.g. "Saturday, October 24, 2026 at 10:45:59 AM GMT+5:30".
+      if (!isNaN(d)) a.title = d.toLocaleString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', hour: 'numeric', minute: '2-digit', second: '2-digit', timeZoneName: 'short' });
+    }
+  }
+
   // Deleted comments get greyed-out vote/reply buttons; give them the normal color.
   function undimActions(comment) {
     let ref = null;
@@ -773,6 +805,7 @@
       restoreAuthorIn([directChild(comment, '[slot="commentMeta"]'), comment], name, comment);
       restoreAvatar(comment, name, comment);
     }
+    linkTime(comment, id);
     const when = formatDate(item.created_utc);
     const useful = bodyIsUseful(item.body);
     if (state.bodyGone && useful) {
