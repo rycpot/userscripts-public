@@ -18,10 +18,9 @@ Updates are automatic: your userscript manager checks this repo and installs a n
 </p>
 
 <h2>Reddit Restore Deleted Posts &amp; Comments</h2>
-<p>On new Reddit, fills deleted and removed posts and comments back into their original spots using the <a href="https://arctic-shift.photon-reddit.com/">Arctic Shift</a> archive. Restored text appears in a red-edged box with the original author and date; a restored author name shows in red.</p>
+<p>On new Reddit, fills deleted and removed posts and comments back into their original spots using the <a href="https://arctic-shift.photon-reddit.com/">Arctic Shift</a> archive. Restored text looks exactly like a normal post or comment, so screenshots look natural. The only marker is a small orange dot in the empty space to the right; hover it to see the archive date, or click it to open the archived copy. A hollow grey dot means the archive doesn't have that one.</p>
 <ul>
   <li>Works on comments that load later too ("more replies", "continue this thread").</li>
-  <li>If the archive never saw the text before it was deleted, the box says so.</li>
   <li>Runs on post pages on www.reddit.com only; old Reddit isn't supported.</li>
 </ul>
 <p>
