@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Reddit Restore Deleted Posts & Comments
 // @namespace    https://github.com/rycpot/userscripts-public
-// @version      6
+// @version      7
 // @description  On new Reddit (www.reddit.com), fills deleted or removed posts and comments back into their original spots using the Arctic Shift archive. Also restores comments that load later ("more replies", "continue thread").
 // @author       you
 // @icon         https://www.reddit.com/favicon.ico
@@ -763,11 +763,47 @@
     return { authorGone, bodyGone, body };
   }
 
-  function expandComment(comment) {
-    if (comment.hasAttribute('collapsed')) comment.removeAttribute('collapsed');
+  function isCollapsed(comment) {
     const details = directChild(comment, 'details')
       || (comment.shadowRoot && comment.shadowRoot.querySelector('details'));
-    if (details && !details.open) details.open = true;
+    return details ? !details.open : comment.hasAttribute('collapsed');
+  }
+
+  // Open a collapsed comment the way a click would, so Reddit loads its text
+  // (collapsed comments are often sent without it; it is fetched on expand).
+  function expandComment(comment) {
+    const details = directChild(comment, 'details')
+      || (comment.shadowRoot && comment.shadowRoot.querySelector('details'));
+    if (details && !details.open) {
+      const summary = directChild(details, 'summary');
+      if (summary) summary.click();
+      if (!details.open) details.open = true;
+    } else if (!details && comment.hasAttribute('collapsed')) {
+      comment.removeAttribute('collapsed');
+    }
+  }
+
+  // Resolve when cond() is true, or after `ms`.
+  function waitFor(cond, ms) {
+    return new Promise((resolve) => {
+      if (cond()) return resolve(true);
+      const t0 = Date.now();
+      const iv = setInterval(() => {
+        if (cond() || Date.now() - t0 > ms) { clearInterval(iv); resolve(cond()); }
+      }, 100);
+    });
+  }
+
+  // Auto-expand collapsed top-level comments (hidden for low score or because
+  // they were deleted) once each. Replies are left as Reddit shows them, and a
+  // comment you collapse yourself afterwards stays collapsed.
+  const autoExpanded = new WeakSet();
+  function expandTopLevel() {
+    document.querySelectorAll('shreddit-comment[depth="0"]').forEach((c) => {
+      if (autoExpanded.has(c)) return;
+      autoExpanded.add(c);
+      if (isCollapsed(c)) expandComment(c);
+    });
   }
 
   async function processComment(comment) {
@@ -777,11 +813,20 @@
     if (!/^[a-z0-9]{1,24}$/i.test(id)) return; // new ids are 13+ chars
     comment.setAttribute(MARK, 'checked');
 
+    // A collapsed comment may not have its text yet; open it and give Reddit a
+    // moment to load it before deciding whether it's deleted.
+    if (isCollapsed(comment) && (attrOn(comment, 'is-comment-deleted') || isDeletedName(comment.getAttribute('author')) || comment.getAttribute('depth') === '0')) {
+      autoExpanded.add(comment);
+      expandComment(comment);
+      await waitFor(() => !comment.isConnected || !!commentBodyNode(comment) || lightDeletedNodes(comment).length > 0, 4000);
+      if (!comment.isConnected) return; // Reddit re-rendered it; the new node gets processed
+    }
+
     const state = commentState(comment);
     if (!state.bodyGone && !state.authorGone) return;
     comment.setAttribute(MARK, 'loading');
 
-    expandComment(comment);
+    if (isCollapsed(comment)) expandComment(comment);
     setDot(comment, 'loading', 'Looking this comment up in the Arctic Shift archive…');
 
     const item = await fetchComment(id);
@@ -1051,6 +1096,7 @@
   function scan() {
     if (!currentPostId()) return;
     const pid = currentPostId();
+    expandTopLevel();
     document.querySelectorAll('shreddit-post').forEach((p) => {
       if (p.getAttribute(MARK) !== pid) processPost(p);
     });
