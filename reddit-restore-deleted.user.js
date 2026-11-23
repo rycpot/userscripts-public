@@ -1,13 +1,15 @@
 // ==UserScript==
 // @name         Reddit Restore Deleted Posts & Comments
 // @namespace    https://github.com/rycpot/userscripts-public
-// @version      1.0.0
+// @version      1.1.0
 // @description  On new Reddit (www.reddit.com), fills deleted or removed posts and comments back into their original spots using the Arctic Shift archive. Also restores comments that load later ("more replies", "continue thread").
 // @author       you
 // @icon         https://www.reddit.com/favicon.ico
 // @match        https://www.reddit.com/*
 // @match        https://sh.reddit.com/*
 // @grant        GM_xmlhttpRequest
+// @grant        GM_registerMenuCommand
+// @grant        GM_setClipboard
 // @connect      arctic-shift.photon-reddit.com
 // @run-at       document-idle
 // @downloadURL  https://raw.githubusercontent.com/rycpot/userscripts-public/main/reddit-restore-deleted.user.js
@@ -127,12 +129,13 @@
   }
 
   async function apiIds(kind, ids, fields) {
-    const url = `${API}/${kind}/ids?ids=${ids.join(',')}&fields=${fields}`;
     for (let attempt = 0; attempt < 4; attempt++) {
+      const url = `${API}/${kind}/ids?ids=${ids.join(',')}` + (fields ? `&fields=${fields}` : '');
       let r;
       try {
         r = await gmGet(url);
       } catch (e) {
+        log('request failed', e && e.message);
         await sleep(1500 * (attempt + 1));
         continue;
       }
@@ -142,7 +145,16 @@
         continue;
       }
       if (r.status >= 500) { await sleep(2000 * (attempt + 1)); continue; }
-      if (r.status !== 200) throw new Error(`Arctic Shift ${r.status}`);
+      if (r.status === 400 && fields) {
+        // A field name the API no longer accepts; ask for whole objects instead.
+        log('API rejected fields', fields, r.responseText && r.responseText.slice(0, 200));
+        fields = null;
+        continue;
+      }
+      if (r.status !== 200) {
+        log('API error', r.status, url, r.responseText && r.responseText.slice(0, 200));
+        throw new Error(`Arctic Shift ${r.status}`);
+      }
       const json = JSON.parse(r.responseText);
       return Array.isArray(json && json.data) ? json.data : [];
     }
@@ -150,6 +162,14 @@
   }
 
   function sleep(ms) { return new Promise((res) => setTimeout(res, ms)); }
+
+  const debugLog = [];
+  function log(...args) {
+    const line = args.map((a) => (typeof a === 'string' ? a : JSON.stringify(a))).join(' ');
+    debugLog.push(new Date().toISOString().slice(11, 19) + ' ' + line);
+    if (debugLog.length > 60) debugLog.shift();
+    console.debug('[Restore Deleted]', ...args);
+  }
 
   // Comment fetching: queued and batched; each waiter gets its own result.
   const commentWaiters = new Map(); // id -> [resolve]
@@ -190,7 +210,7 @@
 
   async function fetchPost(id) {
     if (cache.has('p_' + id)) return cache.get('p_' + id);
-    const items = await apiIds('posts', [id], 'id,author,title,selftext,url,is_self,created_utc');
+    const items = await apiIds('posts', [id], null);
     const item = items.find((it) => String(it.id).replace(/^t3_/, '') === id) || null;
     cache.set('p_' + id, item);
     return item;
@@ -493,13 +513,16 @@
     return null;
   }
 
+  // The light-DOM element Reddit slots in as the comment text. Deleted
+  // comments often have none: their "Comment deleted by user" line is drawn
+  // inside the comment's shadow DOM instead.
   function commentBodyNode(comment) {
-    return directChild(comment, '[slot="comment"]')
-      || (() => {
-        const meta = directChild(comment, '[slot="commentMeta"]');
-        const next = meta && meta.nextElementSibling;
-        return next && !next.matches('shreddit-comment, [slot="children"], [slot="actionRow"], [slot^="more"]') ? next : null;
-      })();
+    return directChild(comment, '[slot="comment"]');
+  }
+
+  // Text of the comment's shadow DOM, minus slotted content.
+  function shadowText(comment) {
+    return comment.shadowRoot ? comment.shadowRoot.textContent || '' : '';
   }
 
   function commentState(comment) {
@@ -512,7 +535,9 @@
       || comment.hasAttribute('removed');
     const body = commentBodyNode(comment);
     const bodyText = body ? body.textContent : '';
-    const bodyGone = flagged || !body || !bodyText.trim() || isDeletedText(bodyText);
+    const shadowSaysDeleted = /comment (deleted|removed)|\[(deleted|removed)\]/i.test(shadowText(comment));
+    const bodyGone = flagged || isDeletedText(bodyText) || (!body && (authorGone || shadowSaysDeleted))
+      || (!!body && !bodyText.trim() && authorGone);
     return { authorGone, bodyGone, body };
   }
 
@@ -541,7 +566,7 @@
     }
 
     const item = await fetchComment(id);
-    if (loading) loading.remove();
+    if (loading) { loading._rdrDead = true; loading.remove(); }
     if (!comment.isConnected) { comment.removeAttribute(MARK); return; }
 
     if (item === undefined) {
@@ -577,36 +602,102 @@
     placeCommentBox(comment, state.body, box, !!(item && bodyIsUseful(item.body)));
   }
 
-  // Put the box where the comment text normally goes. If Reddit's shadow DOM
-  // doesn't render it there, fall back to the comment's meta row.
-  function placeCommentBox(comment, bodyNode, box, hideOriginal) {
-    const existing = comment.querySelectorAll(':scope > .rdr-box, :scope > [slot] > .rdr-box');
-    existing.forEach((b) => { if (b !== box) b.remove(); });
+  // Is the box actually on screen at a usable size? (A box dropped into a
+  // small clipped container, like the avatar column, has boxes but is useless.)
+  function usable(box) {
+    if (!box.isConnected) return false;
+    const r = box.getBoundingClientRect();
+    return r.width >= 120 && r.height >= 12;
+  }
 
-    if (bodyNode && bodyNode.isConnected) {
-      if (hideOriginal) {
-        for (const c of bodyNode.children) if (!c.classList.contains('rdr-box')) c.classList.add('rdr-hidden-original');
-      }
-      bodyNode.appendChild(box);
-    } else {
-      box.setAttribute('slot', 'comment');
-      const meta = directChild(comment, '[slot="commentMeta"]');
-      if (meta) meta.after(box);
-      else comment.prepend(box);
+  function ensureShadowStyle(root) {
+    if (root.querySelector('style[data-rdr-style]')) return;
+    const st = document.createElement('style');
+    st.setAttribute('data-rdr-style', '');
+    st.textContent = style.textContent;
+    root.appendChild(st);
+  }
+
+  // Leaf elements inside the shadow DOM whose text is a "deleted" message.
+  function shadowDeletedNodes(comment) {
+    const root = comment.shadowRoot;
+    if (!root) return [];
+    return [...root.querySelectorAll('*')].filter((n) =>
+      !n.closest('.rdr-box') && n.children.length === 0 && isDeletedText(n.textContent));
+  }
+
+  // Try each spot in turn until the box is visibly rendered.
+  function placeCommentBox(comment, bodyNode, box, hideOriginal) {
+    comment.querySelectorAll(':scope > .rdr-box, :scope > [slot] > .rdr-box').forEach((b) => { if (b !== box) b.remove(); });
+    if (comment.shadowRoot) comment.shadowRoot.querySelectorAll('.rdr-box').forEach((b) => { if (b !== box) b.remove(); });
+    if (comment.nextElementSibling && comment.nextElementSibling.classList.contains('rdr-box') && comment.nextElementSibling !== box) {
+      comment.nextElementSibling.remove();
     }
-    afterLayout(() => {
-      if (!box.isConnected || isRendered(box)) return;
-      const meta = directChild(comment, '[slot="commentMeta"]');
-      if (meta) { box.removeAttribute('slot'); meta.appendChild(box); }
-      afterLayout(() => {
-        if (box.isConnected && !isRendered(box)) {
-          // Last resort: right after the comment element itself.
-          box.removeAttribute('slot');
-          box.style.marginLeft = '48px';
-          comment.after(box);
+
+    const meta = () => directChild(comment, '[slot="commentMeta"]');
+    const spots = [];
+    if (bodyNode) spots.push(['light-body', () => bodyNode.isConnected && (bodyNode.appendChild(box), true)]);
+    spots.push(['light-slot', () => {
+      box.setAttribute('slot', 'comment');
+      const m = meta();
+      if (m) m.after(box); else comment.prepend(box);
+      return true;
+    }]);
+    if (comment.shadowRoot) {
+      spots.push(['shadow-deleted', () => {
+        const n = shadowDeletedNodes(comment)[0];
+        if (!n) return false;
+        ensureShadowStyle(comment.shadowRoot);
+        n.after(box);
+        return true;
+      }]);
+      spots.push(['shadow-slot', () => {
+        const root = comment.shadowRoot;
+        const slot = root.querySelector('slot[name="comment"]') || root.querySelector('slot[name="commentMeta"]');
+        if (!slot) return false;
+        ensureShadowStyle(root);
+        // Put it after the slot's block-level container so it gets its own line.
+        let anchor = slot;
+        while (anchor.parentElement && getComputedStyle(anchor.parentElement).display.includes('flex') && anchor.parentElement !== root.host) {
+          anchor = anchor.parentElement;
         }
-      });
-    });
+        anchor.after(box);
+        return true;
+      }]);
+    }
+    spots.push(['after-comment', () => {
+      box.style.marginLeft = '40px';
+      comment.after(box);
+      return true;
+    }]);
+
+    let i = 0;
+    const tryNext = () => {
+      while (i < spots.length && !box._rdrDead) {
+        const [name, put] = spots[i++];
+        box.removeAttribute('slot');
+        box.remove();
+        if (!put()) continue;
+        afterLayout(() => {
+          if (box._rdrDead) return;
+          if (usable(box)) {
+            comment.setAttribute('data-rdr-spot', name);
+            if (hideOriginal) hideDeletedMessage(comment, bodyNode, box);
+            return;
+          }
+          if (i < spots.length) tryNext();
+        });
+        return;
+      }
+    };
+    tryNext();
+  }
+
+  function hideDeletedMessage(comment, bodyNode, box) {
+    if (bodyNode && bodyNode.isConnected) {
+      for (const c of bodyNode.children) if (c !== box && !c.classList.contains('rdr-box')) c.classList.add('rdr-hidden-original');
+    }
+    shadowDeletedNodes(comment).forEach((n) => { n.style.display = 'none'; });
   }
 
   // ---------------------------------------------------------------- posts
@@ -752,6 +843,32 @@
   setInterval(() => {
     if (location.pathname !== lastPath) { lastPath = location.pathname; queueScan(); }
   }, 500);
+
+  // Tampermonkey menu: copy what this script saw, to help fix layout changes.
+  function debugReport() {
+    const out = ['Restore Deleted ' + (typeof GM_info !== 'undefined' ? GM_info.script.version : ''), location.href, ''];
+    const comments = [...document.querySelectorAll('shreddit-comment')];
+    out.push(`shreddit-comment: ${comments.length}, shreddit-post: ${document.querySelectorAll('shreddit-post').length}`);
+    const interesting = comments.filter((c) => c.getAttribute(MARK) !== 'checked').slice(0, 3);
+    if (!interesting.length && comments[0]) interesting.push(comments[0]);
+    for (const c of interesting) {
+      out.push('', '--- comment attrs: ' + [...c.attributes].map((a) => `${a.name}="${a.value.slice(0, 60)}"`).join(' '));
+      out.push('light children: ' + [...c.children].map((k) => `<${k.tagName.toLowerCase()} slot=${k.getAttribute('slot')}> "${(k.textContent || '').trim().slice(0, 50)}"`).join(' | '));
+      if (c.shadowRoot) out.push('shadow: ' + c.shadowRoot.innerHTML.replace(/<style[\s\S]*?<\/style>/g, '').replace(/\s+/g, ' ').slice(0, 2500));
+      else out.push('shadow: none');
+    }
+    const p = document.querySelector('shreddit-post');
+    if (p) out.push('', '--- post attrs: ' + [...p.attributes].map((a) => `${a.name}="${a.value.slice(0, 60)}"`).join(' '));
+    out.push('', '--- log', ...debugLog);
+    return out.join('\n');
+  }
+  if (typeof GM_registerMenuCommand === 'function') {
+    GM_registerMenuCommand('Copy debug info', () => {
+      const text = debugReport();
+      try { GM_setClipboard(text, 'text'); } catch (e) { console.log(text); }
+      console.log('[Restore Deleted] debug info copied to clipboard:\n' + text);
+    });
+  }
 
   scan();
 })();
