@@ -18,14 +18,8 @@ Updates are automatic: your userscript manager checks this repo and installs a n
 </p>
 
 <h2>Reddit Restore Deleted Posts &amp; Comments</h2>
-<p>Brings back deleted and removed posts and comments on Reddit, right where they were, using the <a href="https://arctic-shift.photon-reddit.com/">Arctic Shift</a> archive. Restored ones look just like normal posts and comments, so screenshots look natural.</p>
-<ul>
-  <li>Restores the text, the author's name and their current profile picture. The time links to the comment like on any other comment.</li>
-  <li>The only marker is a small orange dot in the empty space to the right. Hover it to see the archive date, or click it to open the archived copy. A hollow grey dot means the archive doesn't have that one.</li>
-  <li>Opens collapsed top-level comments (hidden for low score or because they were deleted). Replies stay as Reddit shows them.</li>
-  <li>Also works on comments that load later ("more replies", "continue this thread").</li>
-  <li>Works on new Reddit (www.reddit.com) only, not old Reddit.</li>
-</ul>
+<p>Brings back deleted and removed posts and comments on Reddit from the <a href="https://arctic-shift.photon-reddit.com/">Arctic Shift</a> archive, in their original spots and looking like normal ones. A small orange dot on the right marks each restored one.</p>
+
 <p>
   <a href="https://raw.githubusercontent.com/rycpot/userscripts-public/main/reddit-restore-deleted.user.js">
     <img src="https://img.shields.io/badge/Install-Userscript-4CAF50?style=for-the-badge&logo=tampermonkey&logoColor=white" alt="Install Reddit Restore Deleted Posts &amp; Comments">
