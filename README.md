@@ -17,6 +17,19 @@ Updates are automatic: your userscript manager checks this repo and installs a n
   <img src="https://files.catbox.moe/fonaku.jpeg" alt="Reddit Unread Comment Highlighter" width="600">
 </p>
 
+<h2>Reddit Restore Deleted Posts &amp; Comments</h2>
+<p>On new Reddit, fills deleted and removed posts and comments back into their original spots using the <a href="https://arctic-shift.photon-reddit.com/">Arctic Shift</a> archive. Restored text appears in a red-edged box with the original author and date; a restored author name shows in red.</p>
+<ul>
+  <li>Works on comments that load later too ("more replies", "continue this thread").</li>
+  <li>If the archive never saw the text before it was deleted, the box says so.</li>
+  <li>Runs on post pages on www.reddit.com only; old Reddit isn't supported.</li>
+</ul>
+<p>
+  <a href="https://raw.githubusercontent.com/rycpot/userscripts-public/main/reddit-restore-deleted.user.js">
+    <img src="https://img.shields.io/badge/Install-Userscript-4CAF50?style=for-the-badge&logo=tampermonkey&logoColor=white" alt="Install Reddit Restore Deleted Posts &amp; Comments">
+  </a>
+</p>
+
 <h2>Instagram Right-Click Images</h2>
 <p>Brings back right-click "Copy image" and "Save image as" on Instagram images.</p>
 
