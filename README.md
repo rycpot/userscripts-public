@@ -26,6 +26,15 @@ Updates are automatic: your userscript manager checks this repo and installs a n
   </a>
 </p>
 
+<h2>Reddit Hidden Profile History</h2>
+<p>When a Reddit profile hides its history (fully, or partly with "Some communities may be hidden"), shows the user's posts and comments from the <a href="https://arctic-shift.photon-reddit.com/">Arctic Shift</a> archive, looking like Reddit's own profile feed. Includes a community filter and search across the user's whole history.</p>
+
+<p>
+  <a href="https://raw.githubusercontent.com/rycpot/userscripts-public/main/reddit-hidden-profile-history.user.js">
+    <img src="https://img.shields.io/badge/Install-Userscript-4CAF50?style=for-the-badge&logo=tampermonkey&logoColor=white" alt="Install Reddit Hidden Profile History">
+  </a>
+</p>
+
 <h2>Instagram Right-Click Images</h2>
 <p>Brings back right-click "Copy image" and "Save image as" on Instagram images.</p>
 
