@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Reddit Hidden Profile History
 // @namespace    https://github.com/rycpot/userscripts-public
-// @version      5
+// @version      6
 // @description  On new Reddit, when a user's profile history is hidden (fully, or partly: "Some communities may be hidden due to their private status"), shows their posts and comments from the Arctic Shift archive in Reddit's own profile-feed look, with a subreddit filter and search.
 // @author       you
 // @icon         https://www.reddit.com/favicon.ico
@@ -603,7 +603,15 @@
       position: relative; z-index: 1; }
     .rhph-cimg img { display: block; max-width: min(100%, 360px); max-height: 360px; object-fit: contain; }
     .rhph-pillstat svg { width: 16px; height: 16px; }
-    .rhph-actions.rhph-plainbar .rhph-pillstat { background: transparent; }
+    .rhph-actions.rhph-plainbar .rhph-pillstat { background: transparent; padding: 0 8px; }
+    .rhph-scope .rhph-pillstat, #${ROOT_ID} a.rhph-pillstat { color: var(--color-secondary-weak, var(--rhph-strong)); font-weight: 600; font-size: 12px; }
+    .rhph-actions.rhph-plainbar { gap: 4px; margin-left: -8px; }
+    /* Open in new tab: a round icon button like Reddit's "..." */
+    .rhph-open { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px;
+      border-radius: 999px; color: var(--color-secondary-weak, var(--color-neutral-content-weak, #576f76)) !important;
+      position: relative; z-index: 2; flex: none; text-decoration: none !important; }
+    .rhph-open:hover { background: var(--color-neutral-background-hover, rgba(0,0,0,.05)); color: var(--color-neutral-content-strong, #0f1a1c) !important; }
+    .rhph-open svg { width: 16px; height: 16px; }
     .rhph-actions.rhph-plainbar .rhph-pillstat:hover { background: var(--rhph-hover); }
     .rhph-tag { font-size: 12px; font-weight: 600; padding: 0 6px; border-radius: 4px; margin-left: 4px; }
     .rhph-tag-nsfw { color: #fff; background: #d93a00; }
@@ -648,7 +656,8 @@
     // Outline arrows (stroked), like Reddit's unvoted state.
     up: 'M10 1.9 18 9.9h-4.6v6.4a2.6 2.6 0 0 1-2.6 2.6H9.2a2.6 2.6 0 0 1-2.6-2.6V9.9H2Z',
     down: 'M10 18.1 2 10.1h4.6V3.7a2.6 2.6 0 0 1 2.6-2.6h1.6a2.6 2.6 0 0 1 2.6 2.6v6.4H18Z',
-    comment: 'M10 1a9 9 0 00-9 9c0 1.947.79 3.58 1.935 4.957L.231 17.661A.784.784 0 00.785 19H10a9 9 0 009-9 9 9 0 00-9-9Zm0 16.2H6.162c-.994.004-1.907.053-3.045.144l-.076-.188a36.981 36.981 0 002.328-2.087l-1.05-1.263C3.297 12.576 2.8 11.331 2.8 10c0-3.97 3.23-7.2 7.2-7.2s7.2 3.23 7.2 7.2-3.23 7.2-7.2 7.2Z',
+    comment: 'M10 2.4a7.6 7.6 0 0 0-6.5 11.6L2.2 17.8l3.8-1.2A7.6 7.6 0 1 0 10 2.4Z',
+    open: 'M11.5 3H17v5.5M17 3l-7.5 7.5M15 12v3.8a1.2 1.2 0 0 1-1.2 1.2H4.2A1.2 1.2 0 0 1 3 15.8V6.2A1.2 1.2 0 0 1 4.2 5H8',
     share: 'M11.5 3.5 18 9.2l-6.5 5.7v-3.2c-4.4 0-7.3 1.3-9.5 4.3.6-4.6 3.3-8.4 9.5-9.1V3.5Z',
     caret: 'M10 13.125a.882.882 0 01-.625-.259L5.175 8.667a.884.884 0 111.25-1.25L10 10.992l3.575-3.575a.884.884 0 111.25 1.25l-4.2 4.2a.882.882 0 01-.625.258Z',
   };
@@ -672,9 +681,10 @@
     const s = document.createElementNS(ns, 'svg');
     s.setAttribute('viewBox', '0 0 20 20');
     s.setAttribute('width', '16'); s.setAttribute('height', '16');
-    if (name === 'up' || name === 'down' || name === 'share') {
+    if (name === 'up' || name === 'down' || name === 'share' || name === 'comment' || name === 'open') {
       s.setAttribute('fill', 'none'); s.setAttribute('stroke', 'currentColor');
-      s.setAttribute('stroke-width', '1.7'); s.setAttribute('stroke-linejoin', 'round');
+      s.setAttribute('stroke-width', name === 'open' ? '1.6' : '1.5'); s.setAttribute('stroke-linejoin', 'round');
+      s.setAttribute('stroke-linecap', 'round');
     } else s.setAttribute('fill', 'currentColor');
     const p = document.createElementNS(ns, 'path');
     p.setAttribute('d', PATHS[name]);
@@ -783,6 +793,14 @@
     return null;
   }
 
+  // Open the post/comment in a new tab.
+  function openButton(permalink, slot) {
+    const href = 'https://www.reddit.com' + permalink;
+    const a = el('a', { class: 'rhph-open', href, target: '_blank', rel: 'noopener', title: 'Open in new tab', 'aria-label': 'Open in new tab', slot: slot || null }, svg('open'));
+    a.addEventListener('click', (e) => e.stopPropagation());
+    return a;
+  }
+
   // Share: copy the link, like Reddit's "Copy link".
   function shareButton(permalink, cls) {
     const b = el('button', { type: 'button', class: cls || 'rhph-pillstat', title: 'Copy link' }, [svg('share'), 'Share']);
@@ -828,6 +846,7 @@
       el('span', { class: 'rhph-pillstat' }, [svg('up'), compactNumber(p.score), svg('down')]),
       stat('comment', compactNumber(p.num_comments), href),
       shareButton(p.permalink || `/comments/${p.id}/`),
+      openButton(p.permalink || `/comments/${p.id}/`),
     ]);
   }
 
@@ -929,6 +948,7 @@
       }
     }
 
+    if (useNative) post.appendChild(openButton(permalink, 'promote-post-button'));
     if (!useNative) {
       const bar = fallbackPostBar(p, href);
       bar.setAttribute('data-for', 'shreddit-post');
@@ -973,12 +993,14 @@
         el('span', { slot: 'comment-reply', class: 'contents' }, reply),
         defined('shreddit-comment-share-button')
           ? el('shreddit-comment-share-button', { slot: 'comment-share', 'is-desktop-viewport': 'true', permalink }) : null,
+        openButton(permalink, 'comment-share'),
       ]);
     } else {
       actions = el('div', { class: 'rhph-actions rhph-plainbar' }, [
         el('span', { class: 'rhph-pillstat' }, [svg('up'), compactNumber(c.score), svg('down')]),
         el('a', { class: 'rhph-pillstat', href: permalink, target: '_blank' }, [svg('comment'), 'Reply']),
         shareButton(permalink),
+        openButton(permalink),
       ]);
     }
 
@@ -1363,11 +1385,40 @@
     } finally { checking = false; }
   }
 
+  // Reddit's own items on any profile: add the same open-in-new-tab button
+  // right after Share. Comments: an extra child in the action row's
+  // "comment-share" slot. Posts: the empty "promote-post-button" slot that
+  // follows the share button.
+  function addOpenButtons() {
+    if (!userFromPath()) return;
+    for (const c of document.querySelectorAll('main shreddit-profile-comment:not([data-rhph]):not([data-rhph-open])')) {
+      const row = c.querySelector('shreddit-comment-action-row');
+      const href = c.getAttribute('href') || (row && row.getAttribute('permalink'));
+      if (!row || !href) continue;
+      c.setAttribute('data-rhph-open', '1');
+      const btn = openButton(href.replace(/^https:\/\/www\.reddit\.com/, ''), 'comment-share');
+      const share = row.querySelector(':scope > shreddit-comment-share-button');
+      if (share) share.after(btn); else row.appendChild(btn);
+    }
+    for (const p of document.querySelectorAll('main shreddit-post:not([data-rhph]):not([data-rhph-open])')) {
+      const href = p.getAttribute('permalink');
+      if (!href) continue;
+      p.setAttribute('data-rhph-open', '1');
+      if (p.querySelector(':scope > [slot="promote-post-button"]')) continue;
+      p.appendChild(openButton(href, 'promote-post-button'));
+    }
+  }
+
   let queued = false;
   function queueCheck() {
     if (queued) return;
     queued = true;
-    setTimeout(() => { queued = false; check(); }, 300);
+    setTimeout(() => {
+      queued = false;
+      if (!style.isConnected && userFromPath()) (document.head || document.documentElement).appendChild(style);
+      try { addOpenButtons(); } catch (e) { log('open buttons failed', e && e.message); }
+      check();
+    }, 300);
   }
 
   new MutationObserver(queueCheck).observe(document.documentElement, { childList: true, subtree: true });
