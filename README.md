@@ -27,7 +27,7 @@ Updates are automatic: your userscript manager checks this repo and installs a n
 </p>
 
 <h2>Reddit Hidden Profile History</h2>
-<p>When a Reddit profile hides its history (fully, or partly with "Some communities may be hidden"), shows the user's posts and comments from the <a href="https://arctic-shift.photon-reddit.com/">Arctic Shift</a> archive, looking like Reddit's own profile feed. Includes a community filter and search across the user's whole history.</p>
+<p>Shows a Reddit user's posts and comments from the <a href="https://arctic-shift.photon-reddit.com/">Arctic Shift</a> archive when their profile is hidden or partly hidden. Adds a community filter and search on every profile.</p>
 
 <p>
   <a href="https://raw.githubusercontent.com/rycpot/userscripts-public/main/reddit-hidden-profile-history.user.js">
