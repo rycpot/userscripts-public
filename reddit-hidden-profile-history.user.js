@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Reddit Hidden Profile History
 // @namespace    https://github.com/rycpot/userscripts-public
-// @version      3
+// @version      4
 // @description  On new Reddit, when a user's profile history is hidden (fully, or partly: "Some communities may be hidden due to their private status"), shows their posts and comments from the Arctic Shift archive in Reddit's own profile-feed look, with a subreddit filter and search.
 // @author       you
 // @icon         https://www.reddit.com/favicon.ico
@@ -10,6 +10,7 @@
 // @grant        GM_xmlhttpRequest
 // @grant        GM_registerMenuCommand
 // @grant        GM_setClipboard
+// @grant        unsafeWindow
 // @connect      arctic-shift.photon-reddit.com
 // @run-at       document-idle
 // @downloadURL  https://raw.githubusercontent.com/rycpot/userscripts-public/main/reddit-hidden-profile-history.user.js
@@ -682,8 +683,18 @@
     return t === '[removed]' || t === '[deleted]' || t === '[ Removed by Reddit ]';
   }
 
+  // Userscript managers that run scripts in an isolated world give them
+  // `customElements === null`; Reddit's components live in the page's registry.
+  function registry() {
+    try {
+      if (typeof unsafeWindow !== 'undefined' && unsafeWindow && unsafeWindow.customElements) return unsafeWindow.customElements;
+    } catch (e) { /* not available */ }
+    try { return window.customElements || null; } catch (e) { return null; }
+  }
+
   function defined(tag) {
-    try { return !!customElements.get(tag); } catch (e) { return false; }
+    const reg = registry();
+    try { return !!(reg && reg.get(tag)); } catch (e) { return false; }
   }
 
   // Community icons, looked up once per subreddit.
@@ -792,9 +803,13 @@
   // Remove our stand-in bars if Reddit's component loads after we rendered.
   function dropFallbackWhenDefined(tag, root) {
     if (defined(tag)) return;
-    customElements.whenDefined(tag).then(() => {
-      root.querySelectorAll(`.rhph-fallback[data-for="${tag}"]`).forEach((n) => n.remove());
-    }).catch(() => {});
+    const reg = registry();
+    if (!reg || typeof reg.whenDefined !== 'function') return;
+    try {
+      reg.whenDefined(tag).then(() => {
+        root.querySelectorAll(`.rhph-fallback[data-for="${tag}"]`).forEach((n) => n.remove());
+      }).catch(() => {});
+    } catch (e) { /* ignore */ }
   }
 
   function mediaFor(p) {
