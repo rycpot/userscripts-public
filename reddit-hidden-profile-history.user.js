@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Reddit Hidden Profile History
 // @namespace    https://github.com/rycpot/userscripts-public
-// @version      7
+// @version      8
 // @description  On new Reddit, when a user's profile history is hidden (fully, or partly: "Some communities may be hidden due to their private status"), shows their posts and comments from the Arctic Shift archive in Reddit's own profile-feed look, with a subreddit filter and search.
 // @author       you
 // @icon         https://www.reddit.com/favicon.ico
@@ -603,24 +603,28 @@
       position: relative; z-index: 1; }
     .rhph-cimg img { display: block; max-width: min(100%, 360px); max-height: 360px; object-fit: contain; }
     .rhph-pillstat svg { width: 16px; height: 16px; }
-    .rhph-actions.rhph-plainbar .rhph-pillstat { background: transparent; padding: 0 8px; }
-    .rhph-scope .rhph-pillstat, #${ROOT_ID} a.rhph-pillstat { color: var(--color-secondary-weak, var(--rhph-strong)); font-weight: 600; font-size: 12px; }
-    .rhph-actions.rhph-plainbar { gap: 4px; margin-left: -8px; }
+    .rhph-actions.rhph-plainbar { gap: 0; margin-left: 0; }
     /* Open in new tab: a round icon button like Reddit's "..." */
-    /* Reply: same colour, weight and size as Reddit's Share next to it */
-    #${ROOT_ID} a.rhph-reply { display: inline-flex; align-items: center; gap: 0; height: 32px; padding: 0 12px;
-      border-radius: 999px; border: 0; background: transparent; text-decoration: none;
-      color: var(--color-secondary-weak, var(--color-neutral-content-weak, #5c6c74)) !important;
-      font-size: 12px; line-height: 16px; font-weight: 600; font-family: inherit; }
-    #${ROOT_ID} a.rhph-reply:hover { background: var(--color-neutral-background-hover, rgba(0,0,0,.05));
-      color: var(--color-neutral-content-strong, #0f1a1c) !important; }
-    #${ROOT_ID} a.rhph-reply svg { width: 16px; height: 16px; margin-right: 4px; }
+    /* Comment action buttons: Reddit's button-plain-weak, measured on a live page:
+       600 12px/16px, padding 8px 12px, 32px tall, round, 16px icon + 4px gap.
+       The colour is copied from Reddit's own buttons at runtime (--rhph-action). */
+    #${ROOT_ID} a.rhph-reply, .rhph-plainbar .rhph-pillstat {
+      display: inline-flex; align-items: center; gap: 4px; height: 32px; padding: 8px 12px; box-sizing: border-box;
+      border-radius: 999px; border: 0; background: transparent; text-decoration: none; cursor: pointer;
+      color: var(--rhph-action, #5c6c74) !important; font-family: inherit;
+      font-size: 12px; line-height: 16px; font-weight: 600; }
+    #${ROOT_ID} a.rhph-reply:hover, .rhph-plainbar .rhph-pillstat:hover {
+      background: var(--color-neutral-background-hover, rgba(0,0,0,.05)); }
+    #${ROOT_ID} a.rhph-reply svg, .rhph-plainbar .rhph-pillstat svg { width: 16px; height: 16px; flex: none; }
+    #${ROOT_ID} a.rhph-reply .me-2xs { margin-right: 0; }
+    .rhph-plainbar .rhph-vote { padding: 0; gap: 0; cursor: default; }
+    .rhph-plainbar .rhph-vote:hover { background: transparent; }
+    .rhph-plainbar .rhph-vote svg { margin: 0 8px; }
     .rhph-open { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px;
       border-radius: 999px; color: var(--color-secondary-weak, var(--color-neutral-content-weak, #576f76)) !important;
       position: relative; z-index: 2; flex: none; text-decoration: none !important; }
     .rhph-open:hover { background: var(--color-neutral-background-hover, rgba(0,0,0,.05)); color: var(--color-neutral-content-strong, #0f1a1c) !important; }
     .rhph-open svg { width: 16px; height: 16px; }
-    .rhph-actions.rhph-plainbar .rhph-pillstat:hover { background: var(--rhph-hover); }
     .rhph-tag { font-size: 12px; font-weight: 600; padding: 0 6px; border-radius: 4px; margin-left: 4px; }
     .rhph-tag-nsfw { color: #fff; background: #d93a00; }
     .rhph-tag-removed { color: var(--rhph-weak); border: 1px solid var(--rhph-border); }
@@ -662,11 +666,11 @@
 
   const PATHS = {
     // Outline arrows (stroked), like Reddit's unvoted state.
-    up: 'M10 1.9 18 9.9h-4.6v6.4a2.6 2.6 0 0 1-2.6 2.6H9.2a2.6 2.6 0 0 1-2.6-2.6V9.9H2Z',
-    down: 'M10 18.1 2 10.1h4.6V3.7a2.6 2.6 0 0 1 2.6-2.6h1.6a2.6 2.6 0 0 1 2.6 2.6v6.4H18Z',
-    comment: 'M10 2.4a7.6 7.6 0 0 0-6.5 11.6L2.2 17.8l3.8-1.2A7.6 7.6 0 1 0 10 2.4Z',
+    up: 'M10 19a3.966 3.966 0 01-3.96-3.962V10.98H2.838a1.731 1.731 0 01-1.605-1.073 1.734 1.734 0 01.377-1.895L9.364.254a.925.925 0 011.272 0l7.754 7.759c.498.499.646 1.242.376 1.894-.27.652-.9 1.073-1.605 1.073h-3.202v4.058A3.965 3.965 0 019.999 19H10ZM2.989 9.179H7.84v5.731c0 1.13.81 2.163 1.934 2.278a2.163 2.163 0 002.386-2.15V9.179h4.851L10 2.163 2.989 9.179Z',
+    down: 'M10 1a3.966 3.966 0 013.96 3.962V9.02h3.202c.706 0 1.335.42 1.605 1.073.27.652.122 1.396-.377 1.895l-7.754 7.759a.925.925 0 01-1.272 0l-7.754-7.76a1.734 1.734 0 01-.376-1.894c.27-.652.9-1.073 1.605-1.073h3.202V4.962A3.965 3.965 0 0110 1Zm7.01 9.82h-4.85V5.09c0-1.13-.81-2.163-1.934-2.278a2.163 2.163 0 00-2.386 2.15v5.859H2.989l7.01 7.016 7.012-7.016Z',
+    comment: 'M10 1a9 9 0 00-9 9c0 1.947.79 3.58 1.935 4.957L.231 17.661A.784.784 0 00.785 19H10a9 9 0 009-9 9 9 0 00-9-9Zm0 16.2H6.162c-.994.004-1.907.053-3.045.144l-.076-.188a36.981 36.981 0 002.328-2.087l-1.05-1.263C3.297 12.576 2.8 11.331 2.8 10c0-3.97 3.23-7.2 7.2-7.2s7.2 3.23 7.2 7.2-3.23 7.2-7.2 7.2Z',
     open: 'M11.5 3H17v5.5M17 3l-7.5 7.5M15 12v3.8a1.2 1.2 0 0 1-1.2 1.2H4.2A1.2 1.2 0 0 1 3 15.8V6.2A1.2 1.2 0 0 1 4.2 5H8',
-    share: 'M11.5 3.5 18 9.2l-6.5 5.7v-3.2c-4.4 0-7.3 1.3-9.5 4.3.6-4.6 3.3-8.4 9.5-9.1V3.5Z',
+    share: 'm12.8 17.524 6.89-6.887a.9.9 0 000-1.273L12.8 2.477a1.64 1.64 0 00-1.782-.349 1.64 1.64 0 00-1.014 1.518v2.593C4.054 6.728 1.192 12.075 1 17.376a1.353 1.353 0 00.862 1.32 1.35 1.35 0 001.531-.364l.334-.381c1.705-1.944 3.323-3.791 6.277-4.103v2.509c0 .667.398 1.262 1.014 1.518a1.638 1.638 0 001.783-.349v-.002Zm-.994-1.548V12h-.9c-3.969 0-6.162 2.1-8.001 4.161.514-4.011 2.823-8.16 8-8.16h.9V4.024L17.784 10l-5.977 5.976Z',
     caret: 'M10 13.125a.882.882 0 01-.625-.259L5.175 8.667a.884.884 0 111.25-1.25L10 10.992l3.575-3.575a.884.884 0 111.25 1.25l-4.2 4.2a.882.882 0 01-.625.258Z',
   };
   const EYE = 'M1.5 10S4.5 4 10 4s8.5 6 8.5 6-3 6-8.5 6S1.5 10 1.5 10Z';
@@ -689,9 +693,9 @@
     const s = document.createElementNS(ns, 'svg');
     s.setAttribute('viewBox', '0 0 20 20');
     s.setAttribute('width', '16'); s.setAttribute('height', '16');
-    if (name === 'up' || name === 'down' || name === 'share' || name === 'comment' || name === 'open') {
+    if (name === 'open') {
       s.setAttribute('fill', 'none'); s.setAttribute('stroke', 'currentColor');
-      s.setAttribute('stroke-width', name === 'up' || name === 'down' ? '1.5' : '1.35'); s.setAttribute('stroke-linejoin', 'round');
+      s.setAttribute('stroke-width', '1.5'); s.setAttribute('stroke-linejoin', 'round');
       s.setAttribute('stroke-linecap', 'round');
     } else s.setAttribute('fill', 'currentColor');
     const p = document.createElementNS(ns, 'path');
@@ -1005,7 +1009,7 @@
       ]);
     } else {
       actions = el('div', { class: 'rhph-actions rhph-plainbar' }, [
-        el('span', { class: 'rhph-pillstat' }, [svg('up'), compactNumber(c.score), svg('down')]),
+        el('span', { class: 'rhph-pillstat rhph-vote' }, [svg('up'), compactNumber(c.score), svg('down')]),
         el('a', { class: 'rhph-pillstat', href: permalink, target: '_blank' }, [svg('comment'), 'Reply']),
         shareButton(permalink),
         openButton(permalink),
@@ -1397,6 +1401,23 @@
   // right after Share. Comments: an extra child in the action row's
   // "comment-share" slot. Posts: the empty "promote-post-button" slot that
   // follows the share button.
+  // Copy the colour Reddit uses for its weak action buttons (Reply/Share),
+  // so ours match in light and dark mode.
+  let sampledFor = '';
+  function sampleActionColor() {
+    const theme = document.documentElement.className + '|' + (matchMedia('(prefers-color-scheme: dark)').matches ? 'd' : 'l');
+    if (sampledFor === theme) return;
+    let src = null;
+    const share = document.querySelector('shreddit-comment-share-button:not(.rhph-x)');
+    if (share && share.shadowRoot) src = share.shadowRoot.querySelector('button.button-plain-weak');
+    if (!src) src = [...document.querySelectorAll('.button-plain-weak')].find((n) => !n.closest('#' + ROOT_ID));
+    if (!src) return;
+    const c = getComputedStyle(src).color;
+    if (!c) return;
+    document.documentElement.style.setProperty('--rhph-action', c);
+    sampledFor = theme;
+  }
+
   function addOpenButtons() {
     if (!userFromPath()) return;
     for (const c of document.querySelectorAll('main shreddit-profile-comment:not([data-rhph]):not([data-rhph-open])')) {
@@ -1425,6 +1446,7 @@
       queued = false;
       if (!style.isConnected && userFromPath()) (document.head || document.documentElement).appendChild(style);
       try { addOpenButtons(); } catch (e) { log('open buttons failed', e && e.message); }
+      try { sampleActionColor(); } catch (e) { /* keep the default */ }
       check();
     }, 300);
   }
