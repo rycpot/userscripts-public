@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Reddit Hidden Profile History
 // @namespace    https://github.com/rycpot/userscripts-public
-// @version      6
+// @version      7
 // @description  On new Reddit, when a user's profile history is hidden (fully, or partly: "Some communities may be hidden due to their private status"), shows their posts and comments from the Arctic Shift archive in Reddit's own profile-feed look, with a subreddit filter and search.
 // @author       you
 // @icon         https://www.reddit.com/favicon.ico
@@ -607,6 +607,14 @@
     .rhph-scope .rhph-pillstat, #${ROOT_ID} a.rhph-pillstat { color: var(--color-secondary-weak, var(--rhph-strong)); font-weight: 600; font-size: 12px; }
     .rhph-actions.rhph-plainbar { gap: 4px; margin-left: -8px; }
     /* Open in new tab: a round icon button like Reddit's "..." */
+    /* Reply: same colour, weight and size as Reddit's Share next to it */
+    #${ROOT_ID} a.rhph-reply { display: inline-flex; align-items: center; gap: 0; height: 32px; padding: 0 12px;
+      border-radius: 999px; border: 0; background: transparent; text-decoration: none;
+      color: var(--color-secondary-weak, var(--color-neutral-content-weak, #5c6c74)) !important;
+      font-size: 12px; line-height: 16px; font-weight: 600; font-family: inherit; }
+    #${ROOT_ID} a.rhph-reply:hover { background: var(--color-neutral-background-hover, rgba(0,0,0,.05));
+      color: var(--color-neutral-content-strong, #0f1a1c) !important; }
+    #${ROOT_ID} a.rhph-reply svg { width: 16px; height: 16px; margin-right: 4px; }
     .rhph-open { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px;
       border-radius: 999px; color: var(--color-secondary-weak, var(--color-neutral-content-weak, #576f76)) !important;
       position: relative; z-index: 2; flex: none; text-decoration: none !important; }
@@ -683,7 +691,7 @@
     s.setAttribute('width', '16'); s.setAttribute('height', '16');
     if (name === 'up' || name === 'down' || name === 'share' || name === 'comment' || name === 'open') {
       s.setAttribute('fill', 'none'); s.setAttribute('stroke', 'currentColor');
-      s.setAttribute('stroke-width', name === 'open' ? '1.6' : '1.5'); s.setAttribute('stroke-linejoin', 'round');
+      s.setAttribute('stroke-width', name === 'up' || name === 'down' ? '1.5' : '1.35'); s.setAttribute('stroke-linejoin', 'round');
       s.setAttribute('stroke-linecap', 'round');
     } else s.setAttribute('fill', 'currentColor');
     const p = document.createElementNS(ns, 'path');
@@ -978,8 +986,8 @@
 
     const nativeRow = defined('shreddit-comment-action-row');
     const reply = el('a', {
-      rpl: '', class: 'button rpl-cab border-sm text-label-2 button-plain-weak inline-flex items-center px-sm py-xs',
-      href: permalink, style: 'height: var(--size-button-sm-h);', target: '_blank',
+      rpl: '', class: 'button rpl-cab border-sm text-label-2 button-plain-weak inline-flex items-center px-sm py-xs rhph-reply',
+      href: permalink, target: '_blank',
     }, el('span', { class: 'rpl-cab--leading-icon flex items-center' }, [
       el('span', { class: 'flex text-body-1 me-2xs' }, svg('comment')),
       el('span', { class: 'rpl-cab--content' }, 'Reply'),
