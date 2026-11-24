@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Reddit Hidden Profile History
 // @namespace    https://github.com/rycpot/userscripts-public
-// @version      1
+// @version      2
 // @description  On new Reddit, when a user's profile history is hidden (fully, or partly: "Some communities may be hidden due to their private status"), shows their posts and comments from the Arctic Shift archive in Reddit's own profile-feed look, with a subreddit filter and search.
 // @author       you
 // @icon         https://www.reddit.com/favicon.ico
@@ -141,6 +141,7 @@
         r = await gmGet(url);
       } catch (e) {
         log('request failed', path, e && e.message);
+        if (e && e.message === 'timeout') throw timeoutError('Arctic Shift took too long to answer.');
         await sleep(1500 * (attempt + 1));
         continue;
       }
@@ -149,17 +150,40 @@
         await sleep(Math.min(60, reset) * 1000 + 250);
         continue;
       }
-      if (r.status >= 500) { await sleep(2000 * (attempt + 1)); continue; }
       if (r.status !== 200) {
         let msg = '';
         try { msg = JSON.parse(r.responseText).error || ''; } catch (e) { /* not json */ }
         log('API error', r.status, url, (r.responseText || '').slice(0, 200));
+        // The server gives up on slow queries ("Timeout. Maybe slow down a bit").
+        // Callers handle that by asking for a smaller date range.
+        if (/time ?out/i.test(msg)) throw timeoutError(msg);
+        if (r.status >= 500) { await sleep(2000 * (attempt + 1)); continue; }
         throw new Error(msg || `Arctic Shift returned ${r.status}`);
       }
       const json = JSON.parse(r.responseText);
       return json && json.data;
     }
     throw new Error('Arctic Shift is busy. Try again in a minute.');
+  }
+
+  function timeoutError(msg) {
+    const e = new Error(msg || 'Timeout');
+    e.timeout = true;
+    return e;
+  }
+
+  // When the account was made, so date-range searches know where to stop.
+  const REDDIT_START = 1119484800; // 2005-06-23
+  const createdCache = new Map();
+  function accountCreated(author) {
+    const key = author.toLowerCase();
+    if (!createdCache.has(key)) {
+      createdCache.set(key, fetch(`/user/${encodeURIComponent(author)}/about.json`, { credentials: 'include', headers: { Accept: 'application/json' } })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((j) => { const t = j && j.data && Number(j.data.created_utc); return t > REDDIT_START ? Math.floor(t) - 86400 : REDDIT_START; })
+        .catch(() => REDDIT_START));
+    }
+    return createdCache.get(key);
   }
 
   // All-time list of subreddits the user posted or commented in, with counts.
@@ -186,41 +210,80 @@
   }
 
   // One stream = one kind (posts|comments), optionally one subreddit, optional text.
-  // It pages backwards in time with `before`.
+  // It pages backwards in time with `before`. If Arctic Shift times out (it does
+  // for author + subreddit or text searches on busy accounts), the stream
+  // switches to searching one date range at a time, newest first, shrinking the
+  // range while it keeps timing out and widening it again over quiet stretches.
+  const DAY = 86400;
   class Stream {
     constructor(kind, author, subreddit, text) {
       this.kind = kind; this.author = author; this.subreddit = subreddit; this.text = text;
       this.buffer = []; this.before = null; this.done = false; this.loading = null;
+      this.covered = Infinity;   // everything newer than this has been fetched
+      this.window = 0;           // date-range size in seconds; 0 = no range
+      this.limit = PAGE;
+      this.start = null;         // account creation time (lower bound for ranges)
     }
     params() {
-      const p = { author: this.author, limit: PAGE, sort: 'desc' };
+      const p = { author: this.author, limit: this.limit, sort: 'desc' };
       if (this.subreddit) p.subreddit = this.subreddit;
       if (this.before) p.before = this.before;
       if (this.text) {
         if (this.kind === 'comments') p.body = this.text;
         else p.query = this.text;
       }
+      if (this.window) {
+        const top = this.before || Math.ceil(Date.now() / 1000);
+        p.after = Math.max(this.start, top - this.window);
+      }
       return p;
     }
     async more() {
       if (this.done) return;
       if (this.loading) return this.loading;
-      this.loading = (async () => {
-        const items = await api(this.kind + '/search', this.params());
-        const list = Array.isArray(items) ? items : [];
-        for (const it of list) it.__kind = this.kind;
-        this.buffer.push(...list);
-        if (list.length < PAGE) this.done = true;
-        else this.before = Math.floor(list[list.length - 1].created_utc);
-        // Items sharing the cursor second may repeat on the next page; dedup happens in Feed.
-      })().finally(() => { this.loading = null; });
+      this.loading = this.load().finally(() => { this.loading = null; });
       return this.loading;
     }
-    // Oldest time this stream can vouch for: everything newer has been fetched.
-    floor() {
-      if (this.done) return -Infinity;
-      return this.buffer.length ? this.buffer[this.buffer.length - 1].created_utc : Infinity;
+    async load() {
+      for (let tries = 0; tries < 16; tries++) {
+        const p = this.params();
+        let list;
+        try {
+          const items = await api(this.kind + '/search', p);
+          list = Array.isArray(items) ? items : [];
+        } catch (e) {
+          if (!e.timeout) throw e;
+          if (this.start == null) this.start = await accountCreated(this.author);
+          if (!this.window) this.window = 365 * DAY;
+          else if (this.window > 2 * DAY) this.window = Math.floor(this.window / (this.quiet ? 2 : 4));
+          else if (this.limit > 25) this.limit = 25;
+          else throw new Error('Arctic Shift keeps timing out on this search. Try again in a minute.');
+          log('timeout, narrowing', this.kind, this.subreddit || '', 'window days', Math.round(this.window / DAY), 'limit', this.limit);
+          this.quiet = false;
+          await sleep(300);
+          continue;
+        }
+        for (const it of list) it.__kind = this.kind;
+        this.buffer.push(...list);
+        if (list.length >= p.limit) {
+          // Full page: there may be more right below the oldest item.
+          const last = Math.floor(list[list.length - 1].created_utc);
+          this.before = last;
+          this.covered = last;
+          return;
+        }
+        if (!this.window) { this.done = true; this.covered = -Infinity; return; }
+        // This date range is exhausted; move to the next older one.
+        this.before = p.after;
+        this.covered = p.after;
+        if (p.after <= this.start) { this.done = true; this.covered = -Infinity; return; }
+        if (list.length) { this.quiet = false; return; }
+        // Nothing in this range: take bigger steps back until something shows up.
+        this.quiet = true;
+        this.window = Math.min(this.window * 3, 8 * 365 * DAY);
+      }
     }
+    floor() { return this.done ? -Infinity : this.covered; }
   }
 
   // Merges several streams newest first.
@@ -238,20 +301,18 @@
     async next(want) {
       const out = [];
       while (out.length < want) {
-        // Every unfinished stream must have something buffered before we can merge safely.
-        const hungry = this.streams.filter((s) => !s.done && !s.buffer.length);
-        if (hungry.length) {
-          for (let i = 0; i < hungry.length; i += 4) await Promise.all(hungry.slice(i, i + 4).map((s) => s.more()));
+        // Streams never asked yet: start them, two at a time to go easy on the server.
+        const fresh = this.streams.filter((s) => !s.done && s.covered === Infinity);
+        if (fresh.length) {
+          for (let i = 0; i < fresh.length; i += 2) await Promise.all(fresh.slice(i, i + 2).map((s) => s.more()));
           continue;
         }
-        const live = this.streams.filter((s) => s.buffer.length);
-        if (!live.length) break;
-        // Safe line: the newest "floor" among streams that still have more to load.
+        // Safe line: anything at or above the newest unfinished cursor is final.
         const line = Math.max(...this.streams.filter((s) => !s.done).map((s) => s.floor()), -Infinity);
         let took = false;
         for (;;) {
           let best = null;
-          for (const s of live) if (s.buffer.length && (!best || s.buffer[0].created_utc > best.buffer[0].created_utc)) best = s;
+          for (const s of this.streams) if (s.buffer.length && (!best || s.buffer[0].created_utc > best.buffer[0].created_utc)) best = s;
           if (!best || best.buffer[0].created_utc < line) break;
           const it = best.buffer.shift();
           const key = it.__kind + it.id;
@@ -261,10 +322,10 @@
           took = true;
           if (out.length >= want) break;
         }
+        if (out.length >= want) break;
         if (!took) {
-          // Refill the stream that holds the line back.
           const blocker = this.streams.filter((s) => !s.done).sort((a, b) => b.floor() - a.floor())[0];
-          if (!blocker) continue;
+          if (!blocker) break;   // everything finished and drained
           await blocker.more();
         }
       }
@@ -483,6 +544,7 @@
     .rhph-btn:hover { background: var(--rhph-pill-hover); }
     .rhph-btn.rhph-on { background: var(--rhph-sel); }
     .rhph-plain { background: transparent; }
+    .rhph-btn[hidden] { display: none; }
     .rhph-btn svg { width: 16px; height: 16px; }
     .rhph-search { flex: 1 1 180px; min-width: 140px; max-width: 360px; height: 32px; border-radius: 999px;
       padding: 0 14px; border: 1px solid var(--rhph-border); background: var(--color-neutral-background-weak, transparent);
@@ -490,7 +552,7 @@
     .rhph-search:focus { outline: none; border-color: var(--color-neutral-border-strong, #888); }
     .rhph-src { font-size: 12px; color: var(--rhph-weak); white-space: nowrap; margin-left: auto; }
     .rhph-src b { color: #ff4500; font-weight: 600; }
-    .rhph-chips { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 8px 8px; }
+    .rhph-chips { display: flex; flex-wrap: wrap; gap: 6px; padding: 12px 8px 4px; }
     .rhph-chips:empty { display: none; }
     .rhph-chip { display: inline-flex; align-items: center; gap: 2px; height: 24px; padding: 0 2px 0 10px;
       border-radius: 999px; background: var(--rhph-sel); color: var(--rhph-strong); font-size: 12px; font-weight: 600; }
@@ -520,6 +582,10 @@
     .rhph-pillstat { display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px;
       border-radius: 999px; background: var(--rhph-pill); color: var(--rhph-strong); font-size: 12px; font-weight: 600; }
     .rhph-pillstat:hover { background: var(--rhph-pill-hover); }
+    button.rhph-pillstat { border: 0; font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; }
+    .rhph-cimg { display: block; width: fit-content; max-width: 100%; margin: 8px 0; border-radius: 8px; overflow: hidden;
+      position: relative; z-index: 1; }
+    .rhph-cimg img { display: block; max-width: min(100%, 360px); max-height: 360px; object-fit: contain; }
     .rhph-pillstat svg { width: 16px; height: 16px; }
     .rhph-actions.rhph-plainbar .rhph-pillstat { background: transparent; }
     .rhph-actions.rhph-plainbar .rhph-pillstat:hover { background: var(--rhph-hover); }
@@ -567,6 +633,7 @@
     up: 'M10 1.9 18 9.9h-4.6v6.4a2.6 2.6 0 0 1-2.6 2.6H9.2a2.6 2.6 0 0 1-2.6-2.6V9.9H2Z',
     down: 'M10 18.1 2 10.1h4.6V3.7a2.6 2.6 0 0 1 2.6-2.6h1.6a2.6 2.6 0 0 1 2.6 2.6v6.4H18Z',
     comment: 'M10 1a9 9 0 00-9 9c0 1.947.79 3.58 1.935 4.957L.231 17.661A.784.784 0 00.785 19H10a9 9 0 009-9 9 9 0 00-9-9Zm0 16.2H6.162c-.994.004-1.907.053-3.045.144l-.076-.188a36.981 36.981 0 002.328-2.087l-1.05-1.263C3.297 12.576 2.8 11.331 2.8 10c0-3.97 3.23-7.2 7.2-7.2s7.2 3.23 7.2 7.2-3.23 7.2-7.2 7.2Z',
+    share: 'M11.5 3.5 18 9.2l-6.5 5.7v-3.2c-4.4 0-7.3 1.3-9.5 4.3.6-4.6 3.3-8.4 9.5-9.1V3.5Z',
     caret: 'M10 13.125a.882.882 0 01-.625-.259L5.175 8.667a.884.884 0 111.25-1.25L10 10.992l3.575-3.575a.884.884 0 111.25 1.25l-4.2 4.2a.882.882 0 01-.625.258Z',
   };
   function svg(name) {
@@ -574,7 +641,7 @@
     const s = document.createElementNS(ns, 'svg');
     s.setAttribute('viewBox', '0 0 20 20');
     s.setAttribute('width', '16'); s.setAttribute('height', '16');
-    if (name === 'up' || name === 'down') {
+    if (name === 'up' || name === 'down' || name === 'share') {
       s.setAttribute('fill', 'none'); s.setAttribute('stroke', 'currentColor');
       s.setAttribute('stroke-width', '1.7'); s.setAttribute('stroke-linejoin', 'round');
     } else s.setAttribute('fill', 'currentColor');
@@ -586,14 +653,16 @@
 
   // "18 days ago" (comment credit line, like faceplate-timeago short).
   const rtf = (() => { try { return new Intl.RelativeTimeFormat('en', { numeric: 'always', style: 'short' }); } catch (e) { return null; } })();
+  // Rounded like Reddit's own labels (17.6 days shows as "18 days ago").
+  const UNITS = [['second', 1, 60], ['minute', 60, 60], ['hour', 3600, 24], ['day', 86400, 30.44],
+    ['month', 86400 * 30.44, 12], ['year', 86400 * 365.25, Infinity]];
   function splitAge(utc) {
     const s = Math.max(0, Date.now() / 1000 - utc);
-    if (s < 60) return [Math.floor(s), 'second'];
-    if (s < 3600) return [Math.floor(s / 60), 'minute'];
-    if (s < 86400) return [Math.floor(s / 3600), 'hour'];
-    if (s < 86400 * 30) return [Math.floor(s / 86400), 'day'];
-    if (s < 86400 * 365) return [Math.floor(s / (86400 * 30)), 'month'];
-    return [Math.floor(s / (86400 * 365)), 'year'];
+    for (const [unit, size, max] of UNITS) {
+      const n = Math.round(s / size);
+      if (n < max) return [Math.max(unit === 'second' ? 0 : 1, n), unit];
+    }
+    return [Math.round(s / (86400 * 365.25)), 'year'];
   }
   function ageShort(utc) {
     const [n, u] = splitAge(utc);
@@ -673,6 +742,41 @@
     return null;
   }
 
+  // Share: copy the link, like Reddit's "Copy link".
+  function shareButton(permalink, cls) {
+    const b = el('button', { type: 'button', class: cls || 'rhph-pillstat', title: 'Copy link' }, [svg('share'), 'Share']);
+    b.addEventListener('click', (e) => {
+      e.preventDefault(); e.stopPropagation();
+      const url = 'https://www.reddit.com' + permalink.replace(/\?.*$/, '');
+      const done = () => { b.lastChild.textContent = 'Copied'; setTimeout(() => { b.lastChild.textContent = 'Share'; }, 1500); };
+      try {
+        if (typeof GM_setClipboard === 'function') { GM_setClipboard(url); done(); }
+        else navigator.clipboard.writeText(url).then(done);
+      } catch (err) { log('copy failed', err && err.message); }
+    });
+    b.replaceChild(el('span', null, 'Share'), b.lastChild);
+    return b;
+  }
+
+  // Comments that include a picture only store its link (preview.redd.it/...).
+  // Show those links as the picture, the way Reddit does.
+  const IMAGE_LINK = /^https:\/\/(?:preview\.redd\.it|i\.redd\.it|i\.imgur\.com)\/[^\s]+|^https:\/\/[^\s]+\.(?:png|jpe?g|gif|webp)(?:\?[^\s]*)?$/i;
+  function inlineImages(root) {
+    for (const a of [...root.querySelectorAll('a[href]')]) {
+      const href = a.getAttribute('href');
+      if (!IMAGE_LINK.test(href)) continue;
+      const text = a.textContent.trim();
+      // Only bare links or links labelled as an image, not "see [this](url)".
+      if (text && text !== href && !/^(image|img|gif|https?:)/i.test(text) && !IMAGE_LINK.test(text)) continue;
+      const src = href.replace(/&amp;/g, '&');
+      const img = el('img', { src, alt: 'Image', loading: 'lazy', referrerpolicy: 'no-referrer' });
+      const box = el('a', { class: 'rhph-cimg', href: src, target: '_blank', rel: 'noopener noreferrer' }, img);
+      img.addEventListener('error', () => { box.replaceWith(a); });
+      a.replaceWith(box);
+    }
+    return root;
+  }
+
   function stat(icon, text, href) {
     const n = el(href ? 'a' : 'span', { class: 'rhph-pillstat', href }, [svg(icon), text]);
     return n;
@@ -682,6 +786,7 @@
     return el('div', { class: 'rhph-actions rhph-fallback' }, [
       el('span', { class: 'rhph-pillstat' }, [svg('up'), compactNumber(p.score), svg('down')]),
       stat('comment', compactNumber(p.num_comments), href),
+      shareButton(p.permalink || `/comments/${p.id}/`),
     ]);
   }
 
@@ -763,7 +868,7 @@
         class: 'md feed-card-text-preview text-ellipsis line-clamp-3 xs:line-clamp-6 text-14-scalable pb-2xs [--emote-size:20px] rhph-ptext',
         dir: 'auto', style: 'display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:6;overflow:hidden',
       });
-      md.appendChild(renderMarkdown(p.selftext));
+      md.appendChild(inlineImages(renderMarkdown(p.selftext)));
       post.appendChild(el('div', { slot: 'text-body' },
         el('a', { href, class: 'hover:no-underline no-underline pointer-events-none text-neutral-content visited:text-neutral-content-weak', style: 'pointer-events:none;color:inherit;text-decoration:none' },
           el('div', { class: 'overflow-hidden' }, md))));
@@ -804,7 +909,7 @@
 
     const body = el('div', { class: 'md pt-xs pb-2xs [--emote-size:20px]', dir: 'auto' });
     if (isRemovedBody(c.body)) body.appendChild(el('p', null, el('em', null, c.body)));
-    else body.appendChild(renderMarkdown(c.body || ''));
+    else body.appendChild(inlineImages(renderMarkdown(c.body || '')));
 
     const nativeRow = defined('shreddit-comment-action-row');
     const reply = el('a', {
@@ -828,6 +933,7 @@
       actions = el('div', { class: 'rhph-actions rhph-plainbar' }, [
         el('span', { class: 'rhph-pillstat' }, [svg('up'), compactNumber(c.score), svg('down')]),
         el('a', { class: 'rhph-pillstat', href: permalink, target: '_blank' }, [svg('comment'), 'Reply']),
+        shareButton(permalink),
       ]);
     }
 
@@ -909,12 +1015,15 @@
       let t;
       this.search.addEventListener('input', () => { clearTimeout(t); t = setTimeout(() => this.setText(this.search.value), 600); });
       this.search.addEventListener('keydown', (e) => { if (e.key === 'Enter') { clearTimeout(t); this.setText(this.search.value); } });
+      this.resetBtn = el('button', { class: 'rhph-btn rhph-plain', type: 'button', title: 'Clear the community filter and search' }, 'Reset');
+      this.resetBtn.hidden = true;
+      this.resetBtn.addEventListener('click', () => this.resetAll());
       this.toggleNative = this.reason === 'partial'
         ? el('button', { class: 'rhph-btn rhph-plain', type: 'button', title: 'Some communities are hidden on this profile' }, 'Show Reddit\'s view') : null;
       this.src = el('span', { class: 'rhph-src', title: this.reason === 'partial'
         ? 'Some of this profile\'s communities are hidden; this is the full archived history.'
         : 'This profile\'s history is hidden; this is the archived history.' }, ['from ', el('b', null, 'Arctic Shift')]);
-      this.bar = el('div', { class: 'rhph-bar rhph-scope' }, [this.subBtn, this.search, this.toggleNative, this.src]);
+      this.bar = el('div', { class: 'rhph-bar rhph-scope' }, [this.subBtn, this.search, this.resetBtn, this.toggleNative, this.src]);
       this.chips = el('div', { class: 'rhph-chips' });
       this.list = el('div', { class: 'rhph-list' });
       this.status = el('div', { class: 'rhph-status' });
@@ -932,6 +1041,7 @@
       v = (v || '').trim();
       if (v === this.text) return;
       this.text = v;
+      this.renderChips();
       this.reset();
     }
 
@@ -942,7 +1052,7 @@
     }
 
     renderChips() {
-      this.chips.replaceChildren(...this.subs.map((s) => {
+      this.chips.replaceChildren(...(this.subs.length < 2 ? [] : this.subs).map((s) => {
         const x = el('button', { type: 'button', title: 'Remove', 'aria-label': 'Remove r/' + s }, '×');
         x.addEventListener('click', () => { this.subs = this.subs.filter((n) => n !== s); this.afterSubs(); });
         return el('span', { class: 'rhph-chip' }, ['r/' + s, x]);
@@ -950,6 +1060,16 @@
       this.subBtn.replaceChildren(this.subs.length === 1 ? 'r/' + this.subs[0]
         : this.subs.length ? `${this.subs.length} communities` : 'All communities', svg('caret'));
       this.subBtn.classList.toggle('rhph-on', !!this.subs.length);
+      this.resetBtn.hidden = !this.subs.length && !this.text;
+    }
+
+    // One click back to the default view: all communities, no search.
+    resetAll() {
+      this.subs = [];
+      this.search.value = '';
+      this.text = '';
+      this.renderChips();
+      this.reset();
     }
 
     afterSubs() { this.renderChips(); this.reset(); }
@@ -1081,8 +1201,6 @@
   // Fetch the same partial Reddit would load, once per user.
   const partialCache = new Map();
   function checkPartial(author) {
-    const modal = document.querySelector('shreddit-active-subreddits-modal');
-    if (modal && lower(modal.textContent).includes(PARTIAL_PHRASE)) return Promise.resolve(true);
     const key = author.toLowerCase();
     if (!partialCache.has(key)) {
       partialCache.set(key, fetch(`/svc/shreddit/profiles/${encodeURIComponent(author)}/profile-active-subreddits-modal`, { credentials: 'include' })
@@ -1134,7 +1252,7 @@
         const showNative = feed.classList.toggle('rhph-native-hidden') === false;
         if (opts) opts.setter.classList.toggle('rhph-native-hidden', !showNative);
         view.root.style.display = showNative ? 'none' : '';
-        view.subBtn.style.display = view.search.style.display = showNative ? 'none' : '';
+        view.subBtn.style.display = view.search.style.display = view.resetBtn.style.display = showNative ? 'none' : '';
         view.toggleNative.textContent = showNative ? 'Show full history' : 'Show Reddit\'s view';
       });
     }
