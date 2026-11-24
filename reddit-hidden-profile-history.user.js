@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Reddit Hidden Profile History
 // @namespace    https://github.com/rycpot/userscripts-public
-// @version      4
+// @version      5
 // @description  On new Reddit, when a user's profile history is hidden (fully, or partly: "Some communities may be hidden due to their private status"), shows their posts and comments from the Arctic Shift archive in Reddit's own profile-feed look, with a subreddit filter and search.
 // @author       you
 // @icon         https://www.reddit.com/favicon.ico
@@ -570,6 +570,22 @@
     .rhph-status.rhph-err { color: var(--color-danger-content, #d93a00); }
     .rhph-status:empty { display: none; }
     .rhph-native-hidden { display: none !important; }
+    /* Profile state pill after the display name */
+    .rhph-state { display: inline-flex; align-items: center; gap: 4px; height: 22px; padding: 0 8px; margin-left: 8px;
+      border-radius: 999px; font-size: 12px; font-weight: 600; line-height: 1; vertical-align: middle;
+      white-space: nowrap; font-family: inherit; position: relative; top: -2px; }
+    .rhph-state svg { width: 14px; height: 14px; }
+    .rhph-state-hidden { background: #ffe5de; color: #c23400; }
+    .rhph-state-partial { background: #fff0d1; color: #9a5a00; }
+    .rhph-state-visible { background: #e2f4e7; color: #1b7a3a; }
+    html.theme-dark .rhph-state-hidden { background: #4a1d10; color: #ff8f6b; }
+    html.theme-dark .rhph-state-partial { background: #40300d; color: #f5b94a; }
+    html.theme-dark .rhph-state-visible { background: #16351f; color: #6fd38f; }
+    @media (prefers-color-scheme: dark) {
+      html:not(.theme-light) .rhph-state-hidden { background: #4a1d10; color: #ff8f6b; }
+      html:not(.theme-light) .rhph-state-partial { background: #40300d; color: #f5b94a; }
+      html:not(.theme-light) .rhph-state-visible { background: #16351f; color: #6fd38f; }
+    }
     /* Media */
     .rhph-media { display: block; position: relative; z-index: 1; margin: 4px 0 8px; border-radius: 16px;
       overflow: hidden; border: 1px solid var(--rhph-border); background: #000; max-height: 540px; }
@@ -636,6 +652,21 @@
     share: 'M11.5 3.5 18 9.2l-6.5 5.7v-3.2c-4.4 0-7.3 1.3-9.5 4.3.6-4.6 3.3-8.4 9.5-9.1V3.5Z',
     caret: 'M10 13.125a.882.882 0 01-.625-.259L5.175 8.667a.884.884 0 111.25-1.25L10 10.992l3.575-3.575a.884.884 0 111.25 1.25l-4.2 4.2a.882.882 0 01-.625.258Z',
   };
+  const EYE = 'M1.5 10S4.5 4 10 4s8.5 6 8.5 6-3 6-8.5 6S1.5 10 1.5 10Z';
+  function eyeIcon(kind) {
+    const ns = 'http://www.w3.org/2000/svg';
+    const s = document.createElementNS(ns, 'svg');
+    s.setAttribute('viewBox', '0 0 20 20');
+    const add = (tag, attrs) => { const n = document.createElementNS(ns, tag); for (const k in attrs) n.setAttribute(k, attrs[k]); s.appendChild(n); };
+    add('path', { d: EYE, fill: 'none', stroke: 'currentColor', 'stroke-width': '1.7' });
+    if (kind === 'partial') {
+      add('path', { d: 'M10 4v12', stroke: 'currentColor', 'stroke-width': '1.7' });
+      add('path', { d: 'M10 7.4a2.6 2.6 0 0 0 0 5.2Z', fill: 'currentColor' });
+    } else add('circle', { cx: '10', cy: '10', r: '2.6', fill: 'currentColor' });
+    if (kind === 'hidden') add('path', { d: 'M3 17 17 3', stroke: 'currentColor', 'stroke-width': '1.9', 'stroke-linecap': 'round' });
+    return s;
+  }
+
   function svg(name) {
     const ns = 'http://www.w3.org/2000/svg';
     const s = document.createElementNS(ns, 'svg');
@@ -1010,11 +1041,13 @@
   }
 
   class View {
-    constructor(author, reason) {
+    constructor(author, reason, native, keep) {
+      this.native = native || null;
+      this.showNative = false;
       this.author = author;
-      this.reason = reason;          // 'hidden' | 'partial'
-      this.subs = [];                // selected subreddit names
-      this.text = '';
+      this.reason = reason;          // 'hidden' | 'partial' | 'visible'
+      this.subs = keep ? keep.subs : [];   // selected subreddit names
+      this.text = keep ? keep.text : '';
       this.tab = tabFromPath();
       this.allSubs = null;
       this.count = 0;
@@ -1048,6 +1081,8 @@
       this.io.observe(this.sentinel);
       fetchSubreddits(this.author).then((s) => { this.allSubs = s; if (this.pop) this.fillPicker(); })
         .catch((e) => { this.allSubs = []; this.subsError = e.message; if (this.pop) this.fillPicker(); });
+      this.search.value = this.text;
+      this.renderChips();
       this.reset();
     }
 
@@ -1135,17 +1170,39 @@
       }));
     }
 
+    // On a visible profile the archive only takes over once a filter or
+    // search is used; hidden and partly hidden profiles always show it.
+    isActive() {
+      return this.reason !== 'visible' || !!this.subs.length || !!this.text;
+    }
+
+    // Show either our list or Reddit's own feed (and its sort dropdown).
+    sync() {
+      const archive = this.isActive() && !this.showNative;
+      this.root.style.display = archive ? '' : 'none';
+      this.src.style.display = archive ? '' : 'none';
+      if (this.native) {
+        this.native.feed.classList.toggle('rhph-native-hidden', archive);
+        if (this.native.setter) this.native.setter.classList.toggle('rhph-native-hidden', archive);
+      }
+      for (const n of [this.subBtn, this.search]) n.style.display = this.showNative ? 'none' : '';
+      this.resetBtn.hidden = this.showNative || (!this.subs.length && !this.text);
+      if (this.toggleNative) this.toggleNative.textContent = this.showNative ? 'Show full history' : 'Show Reddit\'s view';
+    }
+
     reset() {
       this.gen = (this.gen || 0) + 1;
-      this.feed = new Feed(this.author, this.tab, this.subs, this.text);
       this.list.replaceChildren();
       this.count = 0;
       this.busy = false;
+      this.sync();
+      if (!this.isActive()) { this.feed = null; this.status.textContent = ''; return; }
+      this.feed = new Feed(this.author, this.tab, this.subs, this.text);
       this.loadMore();
     }
 
     async loadMore() {
-      if (this.busy || this.feed.done) return;
+      if (this.busy || !this.feed || this.feed.done) return;
       this.busy = true;
       const gen = this.gen;
       this.status.className = 'rhph-status';
@@ -1228,43 +1285,59 @@
 
   let view = null;
   let viewKey = '';
-  let hiddenNodes = [];
-
-  function hideNative(nodes) {
-    for (const n of nodes) if (n) { n.classList.add('rhph-native-hidden'); hiddenNodes.push(n); }
-  }
+  let lastFilters = null; // kept across Reddit re-rendering the feed (tab switches)
 
   function unmount() {
-    if (view) view.destroy();
+    if (view) {
+      lastFilters = { key: viewKey, subs: view.subs.slice(), text: view.text };
+      view.destroy();
+      if (view.native) {
+        view.native.feed.classList.remove('rhph-native-hidden');
+        if (view.native.setter) view.native.setter.classList.remove('rhph-native-hidden');
+      }
+    }
     view = null; viewKey = '';
-    for (const n of hiddenNodes) n.classList.remove('rhph-native-hidden');
-    hiddenNodes = [];
+    setBadge(null);
   }
 
   function mount(author, reason, feed) {
     if (!style.isConnected) (document.head || document.documentElement).appendChild(style);
-    view = new View(author, reason);
+    const opts = feedOptionsRow();
+    const keep = lastFilters && lastFilters.key === author.toLowerCase() ? lastFilters : null;
+    view = new View(author, reason, { feed, setter: opts ? opts.setter : null }, keep);
     viewKey = author.toLowerCase();
     feed.parentElement.insertBefore(view.root, feed);
-    const opts = feedOptionsRow();
     if (opts) {
       opts.row.appendChild(view.bar);
-      hideNative([opts.setter]);
     } else {
       view.bar.classList.add('rhph-bar-own');
-      view.root.insertBefore(view.bar, view.root.firstChild);
+      feed.parentElement.insertBefore(view.bar, view.root);
     }
-    hideNative([feed]);
     if (view.toggleNative) {
-      view.toggleNative.addEventListener('click', () => {
-        const showNative = feed.classList.toggle('rhph-native-hidden') === false;
-        if (opts) opts.setter.classList.toggle('rhph-native-hidden', !showNative);
-        view.root.style.display = showNative ? 'none' : '';
-        view.subBtn.style.display = view.search.style.display = view.resetBtn.style.display = showNative ? 'none' : '';
-        view.toggleNative.textContent = showNative ? 'Show full history' : 'Show Reddit\'s view';
-      });
+      view.toggleNative.addEventListener('click', () => { view.showNative = !view.showNative; view.sync(); });
     }
+    view.sync();
+    setBadge(reason);
     log('mounted', author, reason, opts ? 'bar in feed options' : 'own bar');
+  }
+
+  // The pill after the display name: Hidden / Partly hidden / Visible.
+  const STATE_LABEL = { hidden: ['Hidden', 'This profile hides its post and comment history'],
+    partial: ['Partly hidden', 'Some of this profile\'s communities are hidden'],
+    visible: ['Visible', 'This profile\'s history is public'] };
+  function setBadge(reason) {
+    document.querySelectorAll('.rhph-state').forEach((n) => n.remove());
+    if (!reason) return;
+    const h1 = document.querySelector('[data-testid="profile-display-name"]') || document.querySelector('main h1');
+    if (!h1) return;
+    const [label, tip] = STATE_LABEL[reason];
+    h1.appendChild(el('span', { class: 'rhph-state rhph-state-' + reason, title: tip + ' (Reddit Hidden Profile History)' }, [eyeIcon(reason), label]));
+  }
+
+  function profileState(feed) {
+    if (isHidden(feed)) return 'hidden';
+    if (isPartlyHidden()) return 'partial';
+    return 'visible';
   }
 
   let checking = false;
@@ -1272,16 +1345,21 @@
     if (checking) return;
     const author = userFromPath();
     if (!author) { if (view) unmount(); return; }
+    const feed = profileFeed();
     if (view) {
-      if (viewKey === author.toLowerCase() && view.root.isConnected) { view.setTab(tabFromPath()); return; }
+      const same = viewKey === author.toLowerCase() && view.root.isConnected && view.native && view.native.feed === feed;
+      // The sidebar ("Active in") can load after the feed: upgrade visible -> partial.
+      if (same && !(view.reason === 'visible' && feed && profileState(feed) !== 'visible')) {
+        view.setTab(tabFromPath());
+        if (!document.querySelector('.rhph-state')) setBadge(view.reason);
+        return;
+      }
       unmount();
     }
-    const feed = profileFeed();
     if (!feed) return;
     checking = true;
     try {
-      if (isHidden(feed)) { mount(author, 'hidden', feed); return; }
-      if (isPartlyHidden()) mount(author, 'partial', feed);
+      mount(author, profileState(feed), feed);
     } finally { checking = false; }
   }
 
