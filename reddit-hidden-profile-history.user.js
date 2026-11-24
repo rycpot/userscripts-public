@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Reddit Hidden Profile History
 // @namespace    https://github.com/rycpot/userscripts-public
-// @version      8
+// @version      9
 // @description  On new Reddit, when a user's profile history is hidden (fully, or partly: "Some communities may be hidden due to their private status"), shows their posts and comments from the Arctic Shift archive in Reddit's own profile-feed look, with a subreddit filter and search.
 // @author       you
 // @icon         https://www.reddit.com/favicon.ico
@@ -616,7 +616,9 @@
     #${ROOT_ID} a.rhph-reply:hover, .rhph-plainbar .rhph-pillstat:hover {
       background: var(--color-neutral-background-hover, rgba(0,0,0,.05)); }
     #${ROOT_ID} a.rhph-reply svg, .rhph-plainbar .rhph-pillstat svg { width: 16px; height: 16px; flex: none; }
-    #${ROOT_ID} a.rhph-reply .me-2xs { margin-right: 0; }
+    /* Reply's icon and label sit in one inner span: space them there. */
+    #${ROOT_ID} a.rhph-reply .rpl-cab--leading-icon { display: inline-flex; align-items: center; gap: 4px; }
+    #${ROOT_ID} a.rhph-reply .me-2xs { margin: 0; display: inline-flex; }
     .rhph-plainbar .rhph-vote { padding: 0; gap: 0; cursor: default; }
     .rhph-plainbar .rhph-vote:hover { background: transparent; }
     .rhph-plainbar .rhph-vote svg { margin: 0 8px; }
