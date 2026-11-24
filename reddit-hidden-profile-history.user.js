@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Reddit Hidden Profile History
 // @namespace    https://github.com/rycpot/userscripts-public
-// @version      2
+// @version      3
 // @description  On new Reddit, when a user's profile history is hidden (fully, or partly: "Some communities may be hidden due to their private status"), shows their posts and comments from the Arctic Shift archive in Reddit's own profile-feed look, with a subreddit filter and search.
 // @author       you
 // @icon         https://www.reddit.com/favicon.ico
@@ -21,8 +21,8 @@
  *  - Hidden profile: Reddit shows "<name> likes to keep their posts hidden" (or
  *    similar) instead of a feed. Partly hidden profile: the feed shows, but the
  *    "Active in" modal says "Some communities may be hidden due to their
- *    private status." That modal is loaded lazily, so the script fetches it in
- *    the background instead of waiting for a click.
+ *    private status." Only those profiles show "Active in >" in the sidebar,
+ *    so that entry is what the script looks for.
  *  - Subreddit list: Arctic Shift's users/interactions/subreddits, which counts
  *    the user's whole archived history (not just the latest page).
  *  - Search runs on Arctic Shift's server (posts: title + text, comments: body),
@@ -46,8 +46,7 @@
     'likes to keep their posts hidden',
     'likes to keep their',
   ];
-  const PARTIAL_PHRASE = 'some communities may be hidden due to their private status';
-
+  
   // ---------------------------------------------------------------- utils
 
   function sleep(ms) { return new Promise((res) => setTimeout(res, ms)); }
@@ -1196,19 +1195,13 @@
     return HIDDEN_PHRASES.some((p) => t.includes(p));
   }
 
-  // Partly hidden: the "Active in" modal (loaded only on click) says
-  // "Some communities may be hidden due to their private status."
-  // Fetch the same partial Reddit would load, once per user.
-  const partialCache = new Map();
-  function checkPartial(author) {
-    const key = author.toLowerCase();
-    if (!partialCache.has(key)) {
-      partialCache.set(key, fetch(`/svc/shreddit/profiles/${encodeURIComponent(author)}/profile-active-subreddits-modal`, { credentials: 'include' })
-        .then((r) => (r.ok ? r.text() : ''))
-        .then((html) => { const hit = lower(html).includes(PARTIAL_PHRASE); log('active-in check', author, hit); return hit; })
-        .catch((e) => { log('active-in check failed', e && e.message); return false; }));
-    }
-    return partialCache.get(key);
+  // Partly hidden: only these profiles show an "Active in >" entry in the
+  // right sidebar (its modal says "Some communities may be hidden due to their
+  // private status"). Fully visible profiles have no such entry. The modal text
+  // itself can't be used: Reddit includes that sentence for every profile.
+  function isPartlyHidden() {
+    const scope = document.getElementById('right-sidebar-container') || document;
+    return [...scope.querySelectorAll('p')].some((p) => /^active in\b/i.test(p.textContent.trim()));
   }
 
   // The row that holds Reddit's sort dropdown ("New ▾") above the feed.
@@ -1273,11 +1266,7 @@
     checking = true;
     try {
       if (isHidden(feed)) { mount(author, 'hidden', feed); return; }
-      if (await checkPartial(author)) {
-        if (userFromPath() !== author || view) return;
-        const f = profileFeed();
-        if (f) mount(author, 'partial', f);
-      }
+      if (isPartlyHidden()) mount(author, 'partial', feed);
     } finally { checking = false; }
   }
 
