@@ -45,7 +45,6 @@
   const HIDDEN_PHRASES = [
     'likes to keep their posts hidden',
     'likes to keep their',
-    'hasn\'t posted yet',          // not hidden, but checked against the archive below
   ];
   const PARTIAL_PHRASE = 'some communities may be hidden due to their private status';
 
@@ -459,144 +458,155 @@
   }
 
   // ---------------------------------------------------------------- styles
+  //
+  // Items reuse Reddit's own elements and utility classes (copied from a live
+  // profile feed), so they pick up Reddit's fonts, colors, hover and dark mode.
+  // The rules below only cover our filter bar and the fallbacks used when one
+  // of Reddit's components is not loaded on the page.
 
   const style = document.createElement('style');
   style.textContent = `
-    #${ROOT_ID}, .rhph-pop { --rhph-weak: var(--color-neutral-content-weak, #576f76);
+    .rhph-scope { --rhph-weak: var(--color-neutral-content-weak, #576f76);
       --rhph-strong: var(--color-neutral-content-strong, #0f1a1c);
       --rhph-border: var(--color-neutral-border-weak, rgba(0,0,0,.1));
       --rhph-hover: var(--color-neutral-background-hover, rgba(0,0,0,.04));
       --rhph-pill: var(--color-secondary-background, #e5ebee);
       --rhph-pill-hover: var(--color-secondary-background-hover, #d2dadd);
-      --rhph-sel: var(--color-neutral-background-selected, #d2dadd);
-      --rhph-bg: var(--color-neutral-background, #fff);
-      color: var(--rhph-strong); font-family: inherit; }
-    #${ROOT_ID} { width: 100%; }
-    #${ROOT_ID} a { color: inherit; text-decoration: none; }
-    .rhph-banner { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--rhph-weak);
-      padding: 8px 16px; }
-    .rhph-banner b { color: #ff4500; font-weight: 600; }
-    .rhph-banner button { margin-left: auto; }
-    .rhph-bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 8px 16px 12px;
-      position: sticky; top: var(--shreddit-header-height, 56px); z-index: 3; background: var(--rhph-bg); }
-    .rhph-btn { display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px;
+      --rhph-sel: var(--color-secondary-background-selected, #d2dadd);
+      --rhph-bg: var(--color-neutral-background, #fff); }
+    #${ROOT_ID} { width: 100%; color: var(--rhph-strong); }
+    .rhph-bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; flex: 1 1 auto; min-width: 0; }
+    .rhph-bar.rhph-bar-own { padding: 8px 8px 12px; }
+    .rhph-btn { display: inline-flex; align-items: center; gap: 4px; height: 32px; padding: 0 12px;
       border-radius: 999px; border: 0; background: var(--rhph-pill); color: var(--rhph-strong);
-      font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; }
+      font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; white-space: nowrap; }
     .rhph-btn:hover { background: var(--rhph-pill-hover); }
     .rhph-btn.rhph-on { background: var(--rhph-sel); }
     .rhph-plain { background: transparent; }
-    .rhph-search { flex: 1 1 200px; min-width: 160px; height: 32px; border-radius: 999px; padding: 0 14px;
-      border: 1px solid var(--rhph-border); background: var(--color-neutral-background-weak, transparent);
-      color: var(--rhph-strong); font: inherit; font-size: 14px; }
-    .rhph-chips { display: flex; flex-wrap: wrap; gap: 6px; width: 100%; }
+    .rhph-btn svg { width: 16px; height: 16px; }
+    .rhph-search { flex: 1 1 180px; min-width: 140px; max-width: 360px; height: 32px; border-radius: 999px;
+      padding: 0 14px; border: 1px solid var(--rhph-border); background: var(--color-neutral-background-weak, transparent);
+      color: var(--rhph-strong); font: inherit; font-size: 14px; box-sizing: border-box; }
+    .rhph-search:focus { outline: none; border-color: var(--color-neutral-border-strong, #888); }
+    .rhph-src { font-size: 12px; color: var(--rhph-weak); white-space: nowrap; margin-left: auto; }
+    .rhph-src b { color: #ff4500; font-weight: 600; }
+    .rhph-chips { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 8px 8px; }
     .rhph-chips:empty { display: none; }
-    .rhph-chip { display: inline-flex; align-items: center; gap: 4px; height: 24px; padding: 0 4px 0 10px;
-      border-radius: 999px; background: var(--rhph-sel); font-size: 12px; font-weight: 600; }
-    .rhph-chip button { border: 0; background: none; color: inherit; cursor: pointer; font-size: 14px; padding: 0 4px; }
-    .rhph-pop { position: absolute; z-index: 20; width: 320px; max-height: 420px; display: flex; flex-direction: column;
+    .rhph-chip { display: inline-flex; align-items: center; gap: 2px; height: 24px; padding: 0 2px 0 10px;
+      border-radius: 999px; background: var(--rhph-sel); color: var(--rhph-strong); font-size: 12px; font-weight: 600; }
+    .rhph-chip button { border: 0; background: none; color: inherit; cursor: pointer; font-size: 15px; padding: 0 6px; line-height: 1; }
+    .rhph-pop { position: absolute; z-index: 100; width: 320px; max-height: 420px; display: flex; flex-direction: column;
       background: var(--color-neutral-background-container, var(--rhph-bg)); color: var(--rhph-strong);
-      border-radius: 12px; box-shadow: 0 4px 16px rgba(0,0,0,.25); padding: 8px; }
-    .rhph-pop input { margin-bottom: 6px; flex: none; }
+      border-radius: 12px; box-shadow: 0 4px 16px rgba(0,0,0,.25); padding: 8px; font-size: 14px; }
+    .rhph-pop .rhph-search { max-width: none; flex: none; margin-bottom: 6px; }
     .rhph-pop .rhph-list { overflow-y: auto; }
-    .rhph-pop label { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 8px;
-      font-size: 14px; cursor: pointer; }
+    .rhph-pop label { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 8px; cursor: pointer; }
     .rhph-pop label:hover { background: var(--rhph-hover); }
-    .rhph-pop label span.rhph-n { margin-left: auto; color: var(--rhph-weak); font-size: 12px; }
-    .rhph-pop .rhph-pop-foot { display: flex; gap: 6px; justify-content: flex-end; padding-top: 6px; flex: none; }
+    .rhph-pop .rhph-n { margin-left: auto; color: var(--rhph-weak); font-size: 12px; }
+    .rhph-pop-foot { display: flex; gap: 6px; justify-content: flex-end; padding-top: 6px; flex: none; }
     .rhph-status { padding: 16px; color: var(--rhph-weak); font-size: 14px; text-align: center; }
     .rhph-status.rhph-err { color: var(--color-danger-content, #d93a00); }
-    .rhph-hr { border: 0; border-top: 1px solid var(--rhph-border); margin: 0 16px; }
-
-    .rhph-item { position: relative; display: block; padding: 4px 16px 8px; margin: 4px 0;
-      border-radius: 16px; cursor: pointer; }
-    .rhph-item:hover { background: var(--rhph-hover); }
-    .rhph-meta { display: flex; align-items: center; gap: 4px; font-size: 12px; color: var(--rhph-weak);
-      min-height: 32px; flex-wrap: wrap; }
-    .rhph-meta .rhph-sub { color: var(--rhph-strong); font-weight: 600; }
-    .rhph-meta a:hover { text-decoration: underline; }
-    .rhph-icon { width: 24px; height: 24px; border-radius: 50%; flex: none; object-fit: cover;
-      background: #ff4500; color: #fff; display: inline-flex; align-items: center; justify-content: center;
-      font-size: 11px; font-weight: 700; }
-    .rhph-title { font-size: 18px; line-height: 24px; font-weight: 600; margin: 4px 0 8px;
-      overflow-wrap: anywhere; color: var(--rhph-strong); }
-    .rhph-post-title { color: var(--rhph-strong); font-weight: 600; }
-    .rhph-body { font-size: 14px; line-height: 20px; overflow-wrap: anywhere; color: var(--rhph-strong); }
-    .rhph-body.rhph-clamp { max-height: 180px; overflow: hidden;
-      -webkit-mask-image: linear-gradient(180deg, #000 70%, transparent); mask-image: linear-gradient(180deg, #000 70%, transparent); }
-    .rhph-body p { margin: 0 0 .7em; } .rhph-body p:last-child { margin-bottom: 0; }
-    .rhph-body a { color: var(--color-link, #0045ac); text-decoration: underline; }
-    .rhph-body blockquote { border-left: 4px solid var(--rhph-border); margin: .4em 0; padding-left: 10px; }
-    .rhph-body pre { background: var(--rhph-hover); padding: 8px; border-radius: 8px; overflow-x: auto; white-space: pre; font-size: 13px; }
-    .rhph-body code { background: var(--rhph-hover); padding: 0 3px; border-radius: 3px; font-size: 13px; }
-    .rhph-body pre code { background: none; padding: 0; }
-    .rhph-body ul, .rhph-body ol { margin: .3em 0 .7em 1.4em; padding: 0; }
-    .rhph-body ul { list-style: disc; } .rhph-body ol { list-style: decimal; }
-    .rhph-body h1, .rhph-body h2, .rhph-body h3, .rhph-body h4, .rhph-body h5, .rhph-body h6 { font-weight: 700; margin: .5em 0 .3em; font-size: 1.05em; }
-    .rhph-body hr { border: 0; border-top: 1px solid var(--rhph-border); margin: .6em 0; }
-    .rhph-body table { border-collapse: collapse; margin: .4em 0; }
-    .rhph-body th, .rhph-body td { border: 1px solid var(--rhph-border); padding: 2px 6px; }
-    .rdr-spoiler { background: currentColor; border-radius: 3px; cursor: pointer; }
-    .rdr-spoiler.rdr-open { background: var(--rhph-hover); }
-    .rhph-thumb { display: block; max-width: 100%; max-height: 540px; border-radius: 16px; margin: 4px 0 8px;
-      border: 1px solid var(--rhph-border); object-fit: contain; background: #000; }
-    .rhph-linkcard { display: inline-block; font-size: 12px; color: var(--color-link, #0045ac) !important;
-      margin: 0 0 8px; overflow-wrap: anywhere; }
-    .rhph-actions { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+    .rhph-status:empty { display: none; }
+    .rhph-native-hidden { display: none !important; }
+    /* Media */
+    .rhph-media { display: block; position: relative; z-index: 1; margin: 4px 0 8px; border-radius: 16px;
+      overflow: hidden; border: 1px solid var(--rhph-border); background: #000; max-height: 540px; }
+    .rhph-media img { display: block; width: 100%; max-height: 540px; object-fit: contain; }
+    .rhph-linkcard { display: inline-block; position: relative; z-index: 1; font-size: 12px; margin: 0 0 8px;
+      color: var(--color-link, #0045ac); overflow-wrap: anywhere; }
+    .rhph-linkcard:hover { text-decoration: underline; }
+    /* Fallback action bar when Reddit's own component is not on the page */
+    .rhph-actions { display: flex; gap: 8px; margin-top: 8px; position: relative; z-index: 1; }
     .rhph-pillstat { display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px;
-      border-radius: 999px; background: var(--rhph-pill); font-size: 12px; font-weight: 600; }
-    .rhph-pillstat svg { width: 16px; height: 16px; fill: currentColor; }
-    .rhph-tag { font-size: 12px; font-weight: 600; padding: 0 6px; border-radius: 4px; }
+      border-radius: 999px; background: var(--rhph-pill); color: var(--rhph-strong); font-size: 12px; font-weight: 600; }
+    .rhph-pillstat:hover { background: var(--rhph-pill-hover); }
+    .rhph-pillstat svg { width: 16px; height: 16px; }
+    .rhph-actions.rhph-plainbar .rhph-pillstat { background: transparent; }
+    .rhph-actions.rhph-plainbar .rhph-pillstat:hover { background: var(--rhph-hover); }
+    .rhph-tag { font-size: 12px; font-weight: 600; padding: 0 6px; border-radius: 4px; margin-left: 4px; }
     .rhph-tag-nsfw { color: #fff; background: #d93a00; }
     .rhph-tag-removed { color: var(--rhph-weak); border: 1px solid var(--rhph-border); }
-    .rhph-dot { position: absolute; top: 14px; right: -24px; width: 8px; height: 8px; border-radius: 50%;
-      background: #ff4500; opacity: .8; }
-    .rhph-native-hidden { display: none !important; }
+    #${ROOT_ID} .rdr-spoiler { background: currentColor; border-radius: 3px; cursor: pointer; }
+    #${ROOT_ID} .rdr-spoiler.rdr-open { background: var(--rhph-hover); }
+    #${ROOT_ID} .md a { position: relative; z-index: 1; }
+    /* Layout fallbacks with Reddit's spacing, in case a utility class is missing. */
+    #${ROOT_ID} a { text-decoration: none; color: inherit; }
+    #${ROOT_ID} .md a { text-decoration: underline; color: var(--color-link, var(--color-primary, #0a449b)); }
+    #${ROOT_ID} .metadata-divider { padding: 0 2px 0 4px; }
+    #${ROOT_ID} ul { list-style: none; padding: 0; margin: 0; }
+    #${ROOT_ID} .rhph-cover { position: absolute; inset: 0; }
+    #${ROOT_ID} .rhph-flex { display: flex; align-items: center; gap: 4px; min-width: 0; }
+    #${ROOT_ID} .rhph-av { display: inline-flex; width: 24px; height: 24px; flex: none; }
+    #${ROOT_ID} .rhph-av img { width: 24px; height: 24px; border-radius: 50%; object-fit: cover; }
+    #${ROOT_ID} .rhph-post { display: block; position: relative; padding: 4px 16px; margin: 4px 0;
+      border-radius: 16px; cursor: pointer; color: var(--rhph-strong); }
+    #${ROOT_ID} .rhph-post:hover, #${ROOT_ID} .rhph-cin:hover { background: var(--rhph-hover); }
+    #${ROOT_ID} .rhph-credit { font-size: 12px; line-height: 16px; color: var(--rhph-weak); margin: 0 0 4px; min-height: 32px; display: flex; align-items: center; }
+    #${ROOT_ID} .rhph-subname { font-weight: 600; color: var(--rhph-strong); }
+    #${ROOT_ID} .rhph-subname:hover, #${ROOT_ID} .rhph-ul:hover { text-decoration: underline; }
+    #${ROOT_ID} .rhph-ptitle { display: block; font-size: 18px; line-height: 24px; font-weight: 600; margin: 0 0 8px;
+      color: var(--rhph-strong); overflow-wrap: anywhere; }
+    #${ROOT_ID} .rhph-ptext { font-size: 14px; line-height: 20px; color: var(--color-neutral-content, var(--rhph-strong)); }
+    #${ROOT_ID} .rhph-cin { position: relative; border-radius: 16px; }
+    #${ROOT_ID} .rhph-cpad { padding: 8px 16px; }
+    #${ROOT_ID} .rhph-chead { font-size: 12px; line-height: 24px; position: relative; width: fit-content; }
+    #${ROOT_ID} .rhph-cmeta { margin-left: 32px; margin-top: 4px; color: var(--rhph-weak); position: relative; z-index: 1; line-height: 16px; }
+    #${ROOT_ID} .rhph-cmeta .rhph-ul { font-weight: 700; color: var(--rhph-strong); }
+    #${ROOT_ID} .rhph-cbody { margin-left: 22px; margin-top: 4px; padding-left: 10px; font-size: 14px; line-height: 20px;
+      position: relative; z-index: 1; overflow-wrap: anywhere; color: var(--rhph-strong); }
+    #${ROOT_ID} .rhph-cbody p, #${ROOT_ID} .rhph-ptext p { margin: 0 0 8px; }
+    #${ROOT_ID} .rhph-cbody p:last-child, #${ROOT_ID} .rhph-ptext p:last-child { margin-bottom: 0; }
+    #${ROOT_ID} .rhph-cact { margin-left: 24px; position: relative; z-index: 1; }
+    #${ROOT_ID} .rhph-cact .rhph-actions { margin-top: 4px; }
   `;
 
   // ------------------------------------------------------------ rendering
 
-  const ICONS = {
-    up: 'M10 19a3.966 3.966 0 01-3.96-3.962V10.98H2.838a1.731 1.731 0 01-1.605-1.073 1.734 1.734 0 01.377-1.895L9.364.254a.925.925 0 011.272 0l7.754 7.759c.498.499.646 1.242.376 1.894-.27.652-.9 1.073-1.605 1.073h-3.202v4.058A3.965 3.965 0 019.999 19H10z',
-    comment: 'M10 19H1.871a.886.886 0 01-.798-.52.886.886 0 01.158-.941L3.1 15.771A9 9 0 1110 19zm-6.549-1.5H10a7.5 7.5 0 10-5.323-2.219l.54.545L3.451 17.5z',
+  const PATHS = {
+    // Outline arrows (stroked), like Reddit's unvoted state.
+    up: 'M10 1.9 18 9.9h-4.6v6.4a2.6 2.6 0 0 1-2.6 2.6H9.2a2.6 2.6 0 0 1-2.6-2.6V9.9H2Z',
+    down: 'M10 18.1 2 10.1h4.6V3.7a2.6 2.6 0 0 1 2.6-2.6h1.6a2.6 2.6 0 0 1 2.6 2.6v6.4H18Z',
+    comment: 'M10 1a9 9 0 00-9 9c0 1.947.79 3.58 1.935 4.957L.231 17.661A.784.784 0 00.785 19H10a9 9 0 009-9 9 9 0 00-9-9Zm0 16.2H6.162c-.994.004-1.907.053-3.045.144l-.076-.188a36.981 36.981 0 002.328-2.087l-1.05-1.263C3.297 12.576 2.8 11.331 2.8 10c0-3.97 3.23-7.2 7.2-7.2s7.2 3.23 7.2 7.2-3.23 7.2-7.2 7.2Z',
+    caret: 'M10 13.125a.882.882 0 01-.625-.259L5.175 8.667a.884.884 0 111.25-1.25L10 10.992l3.575-3.575a.884.884 0 111.25 1.25l-4.2 4.2a.882.882 0 01-.625.258Z',
   };
   function svg(name) {
     const ns = 'http://www.w3.org/2000/svg';
     const s = document.createElementNS(ns, 'svg');
     s.setAttribute('viewBox', '0 0 20 20');
+    s.setAttribute('width', '16'); s.setAttribute('height', '16');
+    if (name === 'up' || name === 'down') {
+      s.setAttribute('fill', 'none'); s.setAttribute('stroke', 'currentColor');
+      s.setAttribute('stroke-width', '1.7'); s.setAttribute('stroke-linejoin', 'round');
+    } else s.setAttribute('fill', 'currentColor');
     const p = document.createElementNS(ns, 'path');
-    p.setAttribute('d', ICONS[name]);
+    p.setAttribute('d', PATHS[name]);
     s.appendChild(p);
     return s;
   }
 
-  const subIcons = new Map();
-  function subIcon(name) {
-    const span = el('span', { class: 'rhph-icon' }, (name || '?').slice(0, 1).toUpperCase());
-    const key = (name || '').toLowerCase();
-    if (!subIcons.has(key)) {
-      subIcons.set(key, fetch(`/r/${encodeURIComponent(name)}/about.json`, { credentials: 'include' })
-        .then((r) => (r.ok ? r.json() : null))
-        .then((j) => {
-          const d = j && j.data;
-          const u = d && decodeEntities(d.community_icon || d.icon_img || '').split('?')[0];
-          return u && /^https:\/\//.test(u) ? u : null;
-        })
-        .catch(() => null));
-    }
-    subIcons.get(key).then((u) => {
-      if (!u || !span.isConnected) return;
-      const img = el('img', { class: 'rhph-icon', src: u, alt: '', referrerpolicy: 'no-referrer' });
-      span.replaceWith(img);
-    });
-    return span;
+  // "18 days ago" (comment credit line, like faceplate-timeago short).
+  const rtf = (() => { try { return new Intl.RelativeTimeFormat('en', { numeric: 'always', style: 'short' }); } catch (e) { return null; } })();
+  function splitAge(utc) {
+    const s = Math.max(0, Date.now() / 1000 - utc);
+    if (s < 60) return [Math.floor(s), 'second'];
+    if (s < 3600) return [Math.floor(s / 60), 'minute'];
+    if (s < 86400) return [Math.floor(s / 3600), 'hour'];
+    if (s < 86400 * 30) return [Math.floor(s / 86400), 'day'];
+    if (s < 86400 * 365) return [Math.floor(s / (86400 * 30)), 'month'];
+    return [Math.floor(s / (86400 * 365)), 'year'];
   }
-
-  function subLink(sub) {
-    return el('a', { class: 'rhph-sub', href: `/r/${sub}/` }, 'r/' + sub);
+  function ageShort(utc) {
+    const [n, u] = splitAge(utc);
+    return rtf ? rtf.format(-n, u) : timeAgo(utc);
   }
-
-  function timeEl(utc) {
-    return el('time', { datetime: new Date(utc * 1000).toISOString(), title: fullDate(utc) }, timeAgo(utc));
+  // "3 mths" (post credit bar, faceplate-timeago narrow without "ago").
+  const NARROW = { second: ['sec', 'secs'], minute: ['min', 'mins'], hour: ['hr', 'hrs'], day: ['day', 'days'], month: ['mth', 'mths'], year: ['yr', 'yrs'] };
+  function ageNarrow(utc) {
+    const [n, u] = splitAge(utc);
+    return n + ' ' + NARROW[u][n === 1 ? 0 : 1];
+  }
+  function timeNode(utc, text) {
+    return el('time', { datetime: new Date(utc * 1000).toISOString(), title: fullDate(utc) }, text);
   }
 
   function isRemovedBody(t) {
@@ -604,90 +614,273 @@
     return t === '[removed]' || t === '[deleted]' || t === '[ Removed by Reddit ]';
   }
 
-  function stat(icon, text) {
-    return el('span', { class: 'rhph-pillstat' }, [svg(icon), text]);
+  function defined(tag) {
+    try { return !!customElements.get(tag); } catch (e) { return false; }
   }
 
-  function goTo(node, href) {
-    node.addEventListener('click', (e) => {
-      if (e.target.closest('a, button, .rdr-spoiler')) return;
-      if (window.getSelection && String(window.getSelection())) return;
-      if (e.metaKey || e.ctrlKey) window.open(href, '_blank');
-      else location.href = href;
+  // Community icons, looked up once per subreddit.
+  const subIcons = new Map();
+  function subIconUrl(name) {
+    const key = (name || '').toLowerCase();
+    if (!subIcons.has(key)) {
+      subIcons.set(key, fetch(`/r/${encodeURIComponent(name)}/about.json`, { credentials: 'include', headers: { Accept: 'application/json' } })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((j) => {
+          const d = j && j.data;
+          const u = d && decodeEntities(d.community_icon || d.icon_img || '');
+          return u && /^https:\/\//.test(u) ? u : null;
+        })
+        .catch(() => null));
+    }
+    return subIcons.get(key);
+  }
+
+  // Reddit's round 24px community avatar.
+  function subAvatar(name, extraClass) {
+    const img = el('img', {
+      alt: '', width: '24', loading: 'lazy', referrerpolicy: 'no-referrer',
+      class: 'mb-0 shreddit-subreddit-icon__icon rounded-full overflow-hidden nd:bg-secondary-background  w-full h-full',
+      style: 'width: 24px; background: #ff4500;',
+      src: 'https://www.redditstatic.com/shreddit/assets/snoo_wave.png',
     });
+    img.style.visibility = 'hidden';
+    subIconUrl(name).then((u) => {
+      if (u) { img.src = u; img.style.background = ''; }
+      img.style.visibility = '';
+    });
+    return el('span', { class: 'inline-flex items-center justify-center w-lg h-lg relative shrink-0 rhph-av ' + (extraClass || ''), rpl: '', avatar: '', style: extraClass ? 'margin-right:8px' : null },
+      el('span', { rpl: '', class: 'inline-block rounded-full relative h-full w-full overflow-hidden' }, img));
+  }
+
+  // Parent authors for "X replied to Y".
+  const commentAuthorCache = new Map();
+  async function fetchCommentAuthors(ids) {
+    const need = [...new Set(ids)].filter((id) => id && !commentAuthorCache.has(id));
+    for (let i = 0; i < need.length; i += 100) {
+      const chunk = need.slice(i, i + 100);
+      try {
+        const data = await api('comments/ids', { ids: chunk.join(','), fields: 'id,author' });
+        for (const c of data || []) commentAuthorCache.set(c.id, c.author);
+      } catch (e) { log('comments/ids failed', e.message); }
+      for (const id of chunk) if (!commentAuthorCache.has(id)) commentAuthorCache.set(id, null);
+    }
+  }
+
+  function parentAuthor(c) {
+    const pid = c.parent_id || '';
+    if (pid.startsWith('t1_')) return commentAuthorCache.get(pid.slice(3)) || null;
+    if (pid.startsWith('t3_')) { const p = postCache.get(pid.slice(3)); return p ? p.author : null; }
+    return null;
+  }
+
+  function stat(icon, text, href) {
+    const n = el(href ? 'a' : 'span', { class: 'rhph-pillstat', href }, [svg(icon), text]);
+    return n;
+  }
+
+  function fallbackPostBar(p, href) {
+    return el('div', { class: 'rhph-actions rhph-fallback' }, [
+      el('span', { class: 'rhph-pillstat' }, [svg('up'), compactNumber(p.score), svg('down')]),
+      stat('comment', compactNumber(p.num_comments), href),
+    ]);
+  }
+
+  // Remove our stand-in bars if Reddit's component loads after we rendered.
+  function dropFallbackWhenDefined(tag, root) {
+    if (defined(tag)) return;
+    customElements.whenDefined(tag).then(() => {
+      root.querySelectorAll(`.rhph-fallback[data-for="${tag}"]`).forEach((n) => n.remove());
+    }).catch(() => {});
   }
 
   function mediaFor(p) {
     const prev = p.preview && p.preview.images && p.preview.images[0];
     let src = prev && prev.source && decodeEntities(prev.source.url);
     if (!src && /\.(jpe?g|png|gif|webp)(\?|$)/i.test(p.url || '')) src = p.url;
-    if (!src && p.is_gallery && p.media_metadata) {
+    if (!src && p.media_metadata) {
       const first = Object.values(p.media_metadata)[0];
       src = first && first.s && decodeEntities(first.s.u || first.s.gif || '');
     }
-    if (src && /^https:\/\//.test(src)) return el('img', { class: 'rhph-thumb', src, alt: '', loading: 'lazy', referrerpolicy: 'no-referrer' });
-    return null;
+    if (!src && p.thumbnail && /^https:\/\//.test(p.thumbnail)) src = p.thumbnail;
+    return src && /^https:\/\//.test(src) ? src : null;
   }
 
-  function renderPost(p) {
-    const href = p.permalink ? 'https://www.reddit.com' + p.permalink : `https://www.reddit.com/comments/${p.id}/`;
-    const node = el('article', { class: 'rhph-item rhph-post', 'data-id': 't3_' + p.id });
-    node.appendChild(el('div', { class: 'rhph-meta' }, [
-      subIcon(p.subreddit), subLink(p.subreddit), el('span', null, '•'), timeEl(p.created_utc),
-      p.over_18 ? el('span', { class: 'rhph-tag rhph-tag-nsfw' }, 'NSFW') : null,
-      isRemovedBody(p.selftext) || p.removed_by_category ? el('span', { class: 'rhph-tag rhph-tag-removed' }, 'Removed') : null,
-    ]));
-    node.appendChild(el('a', { class: 'rhph-title', href, style: 'display:block' }, decodeEntities(p.title || '')));
+  function postType(p) {
+    if (p.is_self) return 'text';
+    if (p.is_gallery) return 'gallery';
+    if (p.is_video) return 'video';
+    if (/\.(jpe?g|png|gif|webp)(\?|$)/i.test(p.url || '') || p.post_hint === 'image') return 'image';
+    return 'link';
+  }
+
+  // A post, built like Reddit's own profile-feed card (<shreddit-post> + slots).
+  function renderPost(p, index) {
+    const permalink = p.permalink || `/comments/${p.id}/`;
+    const href = 'https://www.reddit.com' + permalink;
+    const sub = p.subreddit;
+    const subHref = `https://www.reddit.com/r/${sub}/`;
+    const useNative = defined('shreddit-post');
+    const post = el(useNative ? 'shreddit-post' : 'div', {
+      class: 'block relative cursor-pointer group bg-neutral-background focus-within:bg-neutral-background-hover hover:bg-neutral-background-hover xs:rounded-4 px-md py-2xs my-2xs',
+      permalink, 'content-href': href, 'view-context': 'ProfileFeed2', 'comment-count': String(p.num_comments || 0),
+      'view-type': 'cardView', 'pdp-target': '_self', 'created-timestamp': new Date(p.created_utc * 1000).toISOString(),
+      domain: p.domain || '', id: 't3_' + p.id, 'post-title': decodeEntities(p.title || ''), 'post-type': postType(p),
+      score: String(p.score || 0), 'subreddit-prefixed-name': 'r/' + sub, 'subreddit-name': sub,
+      'subreddit-id': p.subreddit_id || null, author: p.author || '', 'author-id': p.author_fullname || null,
+      'item-state': 'UNMODERATED', 'data-rhph': '1',
+    });
+    post.classList.add('rhph-post');
+    if (!useNative) post.classList.add('hover:bg-neutral-background-hover');
+
+    post.appendChild(el('a', { slot: 'full-post-link', class: 'absolute inset-0 rhph-cover', href, target: '_self', 'aria-label': decodeEntities(p.title || '') }));
+
+    // Credit bar: icon, r/sub • time
+    const credit = el('span', { slot: 'credit-bar', class: 'flex w-full items-center justify-between -mb-2xs mb-2xs -mt-2xs rhph-credit' },
+      el('span', { class: 'flex-1 min-w-0' },
+        el('div', { class: 'flex min-w-0 w-full items-center gap-2xs rhph-flex', style: 'position:relative;z-index:1;gap:4px' }, [
+          el('span', { class: 'flex shrink-0' }, el('a', { class: 'inline-flex', href: subHref, tabindex: '-1', 'aria-hidden': 'true' }, subAvatar(sub))),
+          el('ul', { rpl: '', class: 'text-neutral-content-weak text-caption-1 p-0 m-0 list-none flex gap-2xs min-w-0 w-full items-center', role: 'presentation', style: 'font-size:12px;display:flex;align-items:center;gap:4px' }, [
+            el('li', { class: 'p-0 m-0 inline-flex whitespace-nowrap items-center overflow-hidden' }, [
+              el('a', { class: 'inline-flex max-w-full min-w-0 items-center gap-2xs text-label-2 text-secondary-plain whitespace-nowrap rhph-subname', href: subHref }, 'r/' + sub),
+              el('span', { 'aria-hidden': 'true', class: 'metadata-divider w-2xs inline-flex shrink-0 justify-center ps-2xs' }, '•'),
+            ]),
+            el('li', { class: 'p-0 m-0 inline-flex whitespace-nowrap items-center' }, [
+              timeNode(p.created_utc, ageNarrow(p.created_utc)),
+              p.over_18 ? el('span', { class: 'rhph-tag rhph-tag-nsfw' }, 'NSFW') : null,
+              (isRemovedBody(p.selftext) || p.removed_by_category) ? el('span', { class: 'rhph-tag rhph-tag-removed' }, 'Removed') : null,
+            ]),
+          ]),
+        ])));
+    post.appendChild(credit);
+
+    post.appendChild(el('a', {
+      href, id: 'post-title-t3_' + p.id, slot: 'title', dir: 'auto',
+      class: 'block text-neutral-content-strong m-0 visited:text-neutral-content-weak font-semibold text-16-scalable xs:text-18-scalable mb-2xs xs:mb-xs overflow-hidden rhph-ptitle',
+    }, decodeEntities(p.title || '')));
+
     if (p.selftext && !isRemovedBody(p.selftext)) {
-      const body = el('div', { class: 'rhph-body rhph-clamp' });
-      body.appendChild(renderMarkdown(p.selftext));
-      node.appendChild(body);
+      const md = el('div', {
+        class: 'md feed-card-text-preview text-ellipsis line-clamp-3 xs:line-clamp-6 text-14-scalable pb-2xs [--emote-size:20px] rhph-ptext',
+        dir: 'auto', style: 'display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:6;overflow:hidden',
+      });
+      md.appendChild(renderMarkdown(p.selftext));
+      post.appendChild(el('div', { slot: 'text-body' },
+        el('a', { href, class: 'hover:no-underline no-underline pointer-events-none text-neutral-content visited:text-neutral-content-weak', style: 'pointer-events:none;color:inherit;text-decoration:none' },
+          el('div', { class: 'overflow-hidden' }, md))));
     } else if (!p.is_self) {
-      const m = mediaFor(p);
-      if (m) node.appendChild(m);
-      else if (p.url && safeHref(p.url) && !/reddit\.com\/r\/.+\/comments\//.test(p.url)) {
-        node.appendChild(el('a', { class: 'rhph-linkcard', href: safeHref(p.url), target: '_blank', rel: 'noopener noreferrer' },
-          p.url.replace(/^https?:\/\/(www\.)?/, '').slice(0, 60)));
+      const src = mediaFor(p);
+      if (src) {
+        post.appendChild(el('div', { slot: 'post-media-container' },
+          el('a', { class: 'rhph-media', href }, el('img', { src, alt: '', loading: 'lazy', referrerpolicy: 'no-referrer' }))));
+      } else if (p.url && safeHref(p.url) && !/reddit\.com\/r\/.+\/comments\//.test(p.url)) {
+        post.appendChild(el('div', { slot: 'text-body' },
+          el('a', { class: 'rhph-linkcard', href: safeHref(p.url), target: '_blank', rel: 'noopener noreferrer' },
+            p.url.replace(/^https?:\/\/(www\.)?/, '').slice(0, 70))));
       }
     }
-    node.appendChild(el('div', { class: 'rhph-actions' }, [
-      stat('up', compactNumber(p.score)),
-      stat('comment', compactNumber(p.num_comments)),
-    ]));
-    goTo(node, href);
-    return node;
+
+    if (!useNative) {
+      const bar = fallbackPostBar(p, href);
+      bar.setAttribute('data-for', 'shreddit-post');
+      post.appendChild(bar);
+      post.addEventListener('click', (e) => {
+        if (e.target.closest('a, button, .rdr-spoiler')) return;
+        location.href = href;
+      });
+    }
+    return el('article', { class: 'w-full m-0', 'data-post-id': 't3_' + p.id, 'data-rhph-index': String(index) }, post);
   }
 
-  function renderComment(c, author) {
+  // A comment, built like Reddit's <shreddit-profile-comment>.
+  function renderComment(c, author, index) {
     const linkId = (c.link_id || '').replace(/^t3_/, '');
     const post = postCache.get(linkId);
-    const href = c.permalink ? 'https://www.reddit.com' + c.permalink
-      : `https://www.reddit.com/r/${c.subreddit}/comments/${linkId}/_/${c.id}/`;
-    const node = el('article', { class: 'rhph-item rhph-comment', 'data-id': 't1_' + c.id });
-    node.appendChild(el('div', { class: 'rhph-meta' }, [
-      subIcon(c.subreddit), subLink(c.subreddit), el('span', null, '•'),
-      el('a', { class: 'rhph-post-title', href: `https://www.reddit.com/comments/${linkId}/` },
-        post && post.title ? decodeEntities(post.title) : 'View post'),
-    ]));
-    node.appendChild(el('div', { class: 'rhph-meta', style: 'min-height:20px' }, [
-      el('a', { href: `/user/${author}/`, class: 'rhph-sub' }, author),
-      el('span', null, 'commented'), timeEl(c.created_utc),
-    ]));
-    const body = el('div', { class: 'rhph-body' });
-    if (isRemovedBody(c.body)) body.appendChild(el('em', null, c.body));
+    const sub = c.subreddit;
+    const subHref = `/r/${sub}/`;
+    const postHref = post && post.permalink ? post.permalink : `/r/${sub}/comments/${linkId}/`;
+    const permalink = (c.permalink ? c.permalink : `/r/${sub}/comments/${linkId}/comment/${c.id}/`).replace(/\/?$/, '/') + '?context=3';
+    const title = post && post.title ? decodeEntities(post.title) : 'View post';
+    const replyTo = parentAuthor(c);
+
+    const body = el('div', { class: 'md pt-xs pb-2xs [--emote-size:20px]', dir: 'auto' });
+    if (isRemovedBody(c.body)) body.appendChild(el('p', null, el('em', null, c.body)));
     else body.appendChild(renderMarkdown(c.body || ''));
-    node.appendChild(body);
-    node.appendChild(el('div', { class: 'rhph-actions' }, [stat('up', compactNumber(c.score))]));
-    goTo(node, href);
-    return node;
+
+    const nativeRow = defined('shreddit-comment-action-row');
+    const reply = el('a', {
+      rpl: '', class: 'button rpl-cab border-sm text-label-2 button-plain-weak inline-flex items-center px-sm py-xs',
+      href: permalink, style: 'height: var(--size-button-sm-h);', target: '_blank',
+    }, el('span', { class: 'rpl-cab--leading-icon flex items-center' }, [
+      el('span', { class: 'flex text-body-1 me-2xs' }, svg('comment')),
+      el('span', { class: 'rpl-cab--content' }, 'Reply'),
+    ]));
+    let actions;
+    if (nativeRow) {
+      actions = el('shreddit-comment-action-row', {
+        'comment-id': 't1_' + c.id, slot: 'actionRow', score: String(c.score || 0), permalink,
+        'telemetry-source': 'profile', 'vote-state': 'NONE', 'is-desktop-viewport': 'true', class: 'block',
+      }, [
+        el('span', { slot: 'comment-reply', class: 'contents' }, reply),
+        defined('shreddit-comment-share-button')
+          ? el('shreddit-comment-share-button', { slot: 'comment-share', 'is-desktop-viewport': 'true', permalink }) : null,
+      ]);
+    } else {
+      actions = el('div', { class: 'rhph-actions rhph-plainbar' }, [
+        el('span', { class: 'rhph-pillstat' }, [svg('up'), compactNumber(c.score), svg('down')]),
+        el('a', { class: 'rhph-pillstat', href: permalink, target: '_blank' }, [svg('comment'), 'Reply']),
+      ]);
+    }
+
+    const userLink = (name) => (name === '[deleted]'
+      ? el('span', { class: 'font-bold text-12 text-tone-1 rhph-ul' }, name)
+      : el('a', { rpl: '', class: 'font-bold text-12 hover:underline text-tone-1 inline-flex items-center rhph-ul', href: `/user/${name}/` }, el('span', { dir: 'auto' }, name)));
+
+    const inner = el('div', { class: 'hover:bg-neutral-background-hover relative rounded-4 rhph-cin' }, [
+      el('a', { href: permalink, class: 'absolute inset-0 rhph-cover', 'aria-label': `Thread for ${author}'s comment on ${title}` }),
+      el('div', { class: 'px-md py-sm rhph-cpad' }, [
+        el('div', { class: 'text-12 relative w-fit rhph-chead' }, [
+          el('div', { class: 'flex items-center rhph-flex', style: 'position:relative;z-index:1;gap:0' }, [
+            el('a', { rpl: '', class: 'flex items-center text-tone-1 font-semibold whitespace-nowrap h-lg', href: subHref, role: 'presentation' },
+              subAvatar(sub, 'me-xs')),
+            el('div', { class: 'grow leading-6 text-neutral-content-strong' }, [
+              el('a', { rpl: '', class: 'inline-flex items-center text-tone-1 font-semibold whitespace-nowrap h-lg rhph-subname', href: subHref }, 'r/' + sub),
+              el('span', { class: 'px-2xs' }, ' • '),
+              el('h2', { class: 'inline-block m-0', style: 'font-size:inherit;display:inline' },
+                el('a', { rpl: '', class: 'text-neutral-content-strong font-normal hover:underline rhph-ul', href: postHref, target: '_blank', style: 'font-weight:400' }, title)),
+            ]),
+          ]),
+          el('div', { class: 'text-neutral-content-weak inline-block ms-xl mt-2xs rhph-cmeta' }, [
+            el('span', null, [
+              userLink(author),
+              replyTo ? ' replied to ' : null,
+              replyTo ? userLink(replyTo) : null,
+            ]),
+            ' ',
+            timeNode(c.created_utc, ageShort(c.created_utc)),
+          ]),
+        ]),
+        el('div', { class: 'ms-[22px] mt-2xs ps-[10px] md rhph-cbody' },
+          el('div', { class: 'text-neutral-content-strong overflow-hidden' }, body)),
+        el('div', { class: 'block ms-lg relative rhph-cact' }, actions),
+      ]),
+    ]);
+
+    const node = el(defined('shreddit-profile-comment') ? 'shreddit-profile-comment' : 'div', {
+      href: permalink, class: 'w-full rounded-4 my-2xs block', 'comment-id': 't1_' + c.id, 'data-rhph': '1',
+    }, inner);
+    return el('article', { 'aria-label': title, class: 'mb-0 w-full', 'data-rhph-index': String(index) }, node);
+  }
+
+  function separator() {
+    return el('hr', { class: 'border-0 border-b-sm border-solid border-b-neutral-border-weak', style: 'border:0;border-bottom:1px solid var(--color-neutral-border-weak, rgba(0,0,0,.1));margin:0' });
   }
 
   // ------------------------------------------------------------- the view
 
   function tabFromPath() {
     const p = location.pathname;
-    if (/\/submitted\/?/.test(p)) return 'posts';
-    if (/\/comments\/?/.test(p)) return 'comments';
+    if (/\/submitted\/?$/.test(p)) return 'posts';
+    if (/\/comments\/?$/.test(p)) return 'comments';
     return 'overview';
   }
 
@@ -704,33 +897,31 @@
       this.text = '';
       this.tab = tabFromPath();
       this.allSubs = null;
-      this.root = el('div', { id: ROOT_ID });
+      this.count = 0;
+      this.root = el('div', { id: ROOT_ID, class: 'rhph-scope' });
       this.build();
     }
 
     build() {
-      const label = this.reason === 'partial'
-        ? 'Some communities are hidden. Showing full history from '
-        : 'History is hidden. Showing it from ';
-      this.toggleNative = this.reason === 'partial'
-        ? el('button', { class: 'rhph-btn rhph-plain', type: 'button' }, 'Show Reddit\'s view') : null;
-      this.root.appendChild(el('div', { class: 'rhph-banner' }, [
-        el('span', null, [label, el('b', null, 'Arctic Shift')]), this.toggleNative]));
-
-      this.subBtn = el('button', { class: 'rhph-btn', type: 'button' }, 'All communities ▾');
+      this.subBtn = el('button', { class: 'rhph-btn', type: 'button' }, ['All communities', svg('caret')]);
       this.subBtn.addEventListener('click', () => this.openPicker());
-      this.search = el('input', { class: 'rhph-search', type: 'search', placeholder: `Search u/${this.author}'s history` });
+      this.search = el('input', { class: 'rhph-search', type: 'search', placeholder: 'Search posts and comments' });
       let t;
-      this.search.addEventListener('input', () => { clearTimeout(t); t = setTimeout(() => this.setText(this.search.value), 500); });
+      this.search.addEventListener('input', () => { clearTimeout(t); t = setTimeout(() => this.setText(this.search.value), 600); });
       this.search.addEventListener('keydown', (e) => { if (e.key === 'Enter') { clearTimeout(t); this.setText(this.search.value); } });
+      this.toggleNative = this.reason === 'partial'
+        ? el('button', { class: 'rhph-btn rhph-plain', type: 'button', title: 'Some communities are hidden on this profile' }, 'Show Reddit\'s view') : null;
+      this.src = el('span', { class: 'rhph-src', title: this.reason === 'partial'
+        ? 'Some of this profile\'s communities are hidden; this is the full archived history.'
+        : 'This profile\'s history is hidden; this is the archived history.' }, ['from ', el('b', null, 'Arctic Shift')]);
+      this.bar = el('div', { class: 'rhph-bar rhph-scope' }, [this.subBtn, this.search, this.toggleNative, this.src]);
       this.chips = el('div', { class: 'rhph-chips' });
-      this.root.appendChild(el('div', { class: 'rhph-bar' }, [this.subBtn, this.search, this.chips]));
       this.list = el('div', { class: 'rhph-list' });
       this.status = el('div', { class: 'rhph-status' });
       this.sentinel = el('div', { style: 'height:1px' });
-      this.root.append(this.list, this.status, this.sentinel);
+      this.root.append(this.chips, this.list, this.status, this.sentinel);
 
-      this.io = new IntersectionObserver((es) => { if (es.some((e) => e.isIntersecting)) this.loadMore(); }, { rootMargin: '800px' });
+      this.io = new IntersectionObserver((es) => { if (es.some((e) => e.isIntersecting)) this.loadMore(); }, { rootMargin: '1200px' });
       this.io.observe(this.sentinel);
       fetchSubreddits(this.author).then((s) => { this.allSubs = s; if (this.pop) this.fillPicker(); })
         .catch((e) => { this.allSubs = []; this.subsError = e.message; if (this.pop) this.fillPicker(); });
@@ -752,11 +943,12 @@
 
     renderChips() {
       this.chips.replaceChildren(...this.subs.map((s) => {
-        const x = el('button', { type: 'button', title: 'Remove' }, '×');
+        const x = el('button', { type: 'button', title: 'Remove', 'aria-label': 'Remove r/' + s }, '×');
         x.addEventListener('click', () => { this.subs = this.subs.filter((n) => n !== s); this.afterSubs(); });
         return el('span', { class: 'rhph-chip' }, ['r/' + s, x]);
       }));
-      this.subBtn.textContent = (this.subs.length ? `${this.subs.length} selected` : 'All communities') + ' ▾';
+      this.subBtn.replaceChildren(this.subs.length === 1 ? 'r/' + this.subs[0]
+        : this.subs.length ? `${this.subs.length} communities` : 'All communities', svg('caret'));
       this.subBtn.classList.toggle('rhph-on', !!this.subs.length);
     }
 
@@ -764,9 +956,10 @@
 
     openPicker() {
       if (this.pop) { this.closePicker(); return; }
-      this.pop = el('div', { class: 'rhph-pop' });
+      this.pop = el('div', { class: 'rhph-pop rhph-scope' });
       this.popFilter = el('input', { class: 'rhph-search', type: 'search', placeholder: 'Find a community' });
       this.popFilter.addEventListener('input', () => this.fillPicker());
+      this.popFilter.addEventListener('keydown', (e) => { if (e.key === 'Enter') apply.click(); if (e.key === 'Escape') this.closePicker(); });
       this.popList = el('div', { class: 'rhph-list' });
       const clear = el('button', { class: 'rhph-btn rhph-plain', type: 'button' }, 'Clear');
       clear.addEventListener('click', () => { this.pending = new Set(); this.fillPicker(); });
@@ -776,11 +969,11 @@
       this.pending = new Set(this.subs);
       const r = this.subBtn.getBoundingClientRect();
       this.pop.style.top = (r.bottom + window.scrollY + 6) + 'px';
-      this.pop.style.left = (r.left + window.scrollX) + 'px';
+      this.pop.style.left = Math.max(8, Math.min(r.left + window.scrollX, window.scrollX + document.documentElement.clientWidth - 330)) + 'px';
       document.body.appendChild(this.pop);
       this.fillPicker();
       this.popFilter.focus();
-      this.outside = (e) => { if (!this.pop.contains(e.target) && e.target !== this.subBtn) this.closePicker(); };
+      this.outside = (e) => { if (this.pop && !this.pop.contains(e.target) && !this.subBtn.contains(e.target)) this.closePicker(); };
       setTimeout(() => document.addEventListener('mousedown', this.outside), 0);
     }
 
@@ -800,7 +993,7 @@
       const q = this.popFilter.value.trim().toLowerCase().replace(/^r\//, '');
       const rows = this.allSubs.filter((s) => !q || s.name.toLowerCase().includes(q))
         .sort((a, b) => (this.pending.has(b.name) - this.pending.has(a.name)) || b.count - a.count);
-      this.popList.replaceChildren(...rows.slice(0, 300).map((s) => {
+      this.popList.replaceChildren(...rows.slice(0, 400).map((s) => {
         const cb = el('input', { type: 'checkbox' });
         cb.checked = this.pending.has(s.name);
         cb.addEventListener('change', () => { if (cb.checked) this.pending.add(s.name); else this.pending.delete(s.name); });
@@ -812,6 +1005,7 @@
       this.gen = (this.gen || 0) + 1;
       this.feed = new Feed(this.author, this.tab, this.subs, this.text);
       this.list.replaceChildren();
+      this.count = 0;
       this.busy = false;
       this.loadMore();
     }
@@ -822,29 +1016,36 @@
       const gen = this.gen;
       this.status.className = 'rhph-status';
       this.status.textContent = 'Loading…';
+      let failed = false;
       try {
         const items = await this.feed.next(25);
         if (gen !== this.gen) return;
-        await fetchPostsById(items.filter((i) => i.__kind === 'comments').map((c) => (c.link_id || '').replace(/^t3_/, '')));
+        const comments = items.filter((i) => i.__kind === 'comments');
+        await fetchPostsById(comments.map((c) => (c.link_id || '').replace(/^t3_/, '')));
+        await fetchCommentAuthors(comments.map((c) => c.parent_id || '').filter((id) => id.startsWith('t1_')).map((id) => id.slice(3)));
         if (gen !== this.gen) return;
-        for (const it of items) this.list.appendChild(it.__kind === 'posts' ? renderPost(it) : renderComment(it, this.author));
+        for (const it of items) {
+          if (this.count) this.list.appendChild(separator());
+          this.list.appendChild(it.__kind === 'posts' ? renderPost(it, this.count) : renderComment(it, this.author, this.count));
+          this.count++;
+        }
+        dropFallbackWhenDefined('shreddit-post', this.list);
         if (this.feed.done) {
-          this.status.textContent = this.list.children.length ? 'End of archived history.' : (this.text || this.subs.length ? 'No matches in the archive.' : 'Nothing archived for this user.');
+          this.status.textContent = this.count ? '' : (this.text || this.subs.length ? 'No matches in the archive.' : 'Nothing archived for this user.');
         } else this.status.textContent = '';
       } catch (e) {
         if (gen !== this.gen) return;
+        failed = true;
         this.status.className = 'rhph-status rhph-err';
-        this.status.replaceChildren(e.message + ' ', (() => {
-          const b = el('button', { class: 'rhph-btn', type: 'button' }, 'Retry');
-          b.addEventListener('click', () => this.loadMore());
-          return b;
-        })());
+        const b = el('button', { class: 'rhph-btn', type: 'button' }, 'Retry');
+        b.addEventListener('click', () => this.loadMore());
+        this.status.replaceChildren(e.message + ' ', b);
       } finally {
         if (gen === this.gen) {
           this.busy = false;
-          // Keep filling while the sentinel is still on screen.
+          // Keep filling while the bottom is still near the screen.
           const r = this.sentinel.getBoundingClientRect();
-          if (!this.feed.done && r.top < window.innerHeight + 800 && this.status.className === 'rhph-status') setTimeout(() => this.loadMore(), 50);
+          if (!failed && !this.feed.done && r.top < window.innerHeight + 1200) setTimeout(() => this.loadMore(), 50);
         }
       }
     }
@@ -854,90 +1055,90 @@
       this.io.disconnect();
       this.closePicker();
       this.root.remove();
+      this.bar.remove();
     }
   }
 
   // --------------------------------------------------- detecting & mounting
 
-  function textIncludes(node, phrase) {
-    return (node.textContent || '').toLowerCase().includes(phrase);
+  function lower(s) { return (s || '').replace(/\s+/g, ' ').toLowerCase(); }
+
+  function profileFeed() {
+    return document.querySelector('main shreddit-feed') || document.querySelector('shreddit-feed');
   }
 
-  // The smallest element holding the "keeps their posts hidden" text.
-  function findHiddenNotice() {
-    const main = document.querySelector('main') || document.body;
-    const walker = document.createTreeWalker(main, NodeFilter.SHOW_TEXT);
-    let n;
-    while ((n = walker.nextNode())) {
-      const t = n.nodeValue.toLowerCase();
-      if (HIDDEN_PHRASES.slice(0, 2).some((p) => t.includes(p))) return n.parentElement;
-    }
-    return null;
+  // Fully hidden: Reddit's empty feed says "<name> likes to keep their posts hidden".
+  function isHidden(feed) {
+    const empty = feed && feed.querySelector('#empty-feed-content');
+    const scope = empty || feed;
+    if (!scope) return false;
+    const t = lower(scope.textContent);
+    return HIDDEN_PHRASES.some((p) => t.includes(p));
   }
 
-  // Reddit loads the "Active in" modal only when clicked. If it is already on
-  // the page (the user clicked), read it; otherwise fetch the same partial.
+  // Partly hidden: the "Active in" modal (loaded only on click) says
+  // "Some communities may be hidden due to their private status."
+  // Fetch the same partial Reddit would load, once per user.
   const partialCache = new Map();
   function checkPartial(author) {
     const modal = document.querySelector('shreddit-active-subreddits-modal');
-    if (modal && modal.shadowRoot && textIncludes(modal.shadowRoot, PARTIAL_PHRASE)) return Promise.resolve(true);
+    if (modal && lower(modal.textContent).includes(PARTIAL_PHRASE)) return Promise.resolve(true);
     const key = author.toLowerCase();
     if (!partialCache.has(key)) {
-      const url = activeInPartialUrl(author);
-      partialCache.set(key, !url ? Promise.resolve(false) : fetch(url, { credentials: 'include' })
+      partialCache.set(key, fetch(`/svc/shreddit/profiles/${encodeURIComponent(author)}/profile-active-subreddits-modal`, { credentials: 'include' })
         .then((r) => (r.ok ? r.text() : ''))
-        .then((html) => html.toLowerCase().includes(PARTIAL_PHRASE))
-        .catch(() => false));
+        .then((html) => { const hit = lower(html).includes(PARTIAL_PHRASE); log('active-in check', author, hit); return hit; })
+        .catch((e) => { log('active-in check failed', e && e.message); return false; }));
     }
     return partialCache.get(key);
   }
 
-  // The URL of the "Active in" modal partial. Filled in from the page dump.
-  function activeInPartialUrl(author) {
-    const loader = document.querySelector('[src*="active-subreddits"], [src*="active_subreddits"], [src*="activeSubreddits"]');
-    if (loader) return loader.getAttribute('src');
-    return null;
-  }
-
-  // Where the feed lives (the element we put ours in front of).
-  function feedAnchor(notice) {
-    if (notice) {
-      let n = notice;
-      const main = notice.closest('main') || document.querySelector('main');
-      while (n.parentElement && n.parentElement !== main && n.parentElement.children.length === 1) n = n.parentElement;
-      return n;
-    }
-    return document.querySelector('main shreddit-feed, main [id^="profile-feed"], main faceplate-batch, main shreddit-post')
-      ? (document.querySelector('main shreddit-feed') || document.querySelector('main shreddit-post').parentElement)
-      : null;
+  // The row that holds Reddit's sort dropdown ("New ▾") above the feed.
+  function feedOptionsRow() {
+    const setter = document.querySelector('main shreddit-layout-event-setter');
+    const row = setter && setter.closest('div.flex');
+    return row ? { row, setter } : null;
   }
 
   let view = null;
   let viewKey = '';
-  let nativeHidden = [];
+  let hiddenNodes = [];
+
+  function hideNative(nodes) {
+    for (const n of nodes) if (n) { n.classList.add('rhph-native-hidden'); hiddenNodes.push(n); }
+  }
 
   function unmount() {
     if (view) view.destroy();
     view = null; viewKey = '';
-    for (const n of nativeHidden) n.classList.remove('rhph-native-hidden');
-    nativeHidden = [];
+    for (const n of hiddenNodes) n.classList.remove('rhph-native-hidden');
+    hiddenNodes = [];
   }
 
-  function mount(author, reason, anchor) {
+  function mount(author, reason, feed) {
     if (!style.isConnected) (document.head || document.documentElement).appendChild(style);
     view = new View(author, reason);
     viewKey = author.toLowerCase();
-    anchor.parentElement.insertBefore(view.root, anchor);
-    anchor.classList.add('rhph-native-hidden');
-    nativeHidden = [anchor];
+    feed.parentElement.insertBefore(view.root, feed);
+    const opts = feedOptionsRow();
+    if (opts) {
+      opts.row.appendChild(view.bar);
+      hideNative([opts.setter]);
+    } else {
+      view.bar.classList.add('rhph-bar-own');
+      view.root.insertBefore(view.bar, view.root.firstChild);
+    }
+    hideNative([feed]);
     if (view.toggleNative) {
       view.toggleNative.addEventListener('click', () => {
-        const showNative = anchor.classList.toggle('rhph-native-hidden') === false;
-        view.list.style.display = view.status.style.display = showNative ? 'none' : '';
+        const showNative = feed.classList.toggle('rhph-native-hidden') === false;
+        if (opts) opts.setter.classList.toggle('rhph-native-hidden', !showNative);
+        view.root.style.display = showNative ? 'none' : '';
+        view.subBtn.style.display = view.search.style.display = showNative ? 'none' : '';
         view.toggleNative.textContent = showNative ? 'Show full history' : 'Show Reddit\'s view';
       });
     }
-    log('mounted', author, reason);
+    log('mounted', author, reason, opts ? 'bar in feed options' : 'own bar');
   }
 
   let checking = false;
@@ -949,14 +1150,15 @@
       if (viewKey === author.toLowerCase() && view.root.isConnected) { view.setTab(tabFromPath()); return; }
       unmount();
     }
+    const feed = profileFeed();
+    if (!feed) return;
     checking = true;
     try {
-      const notice = findHiddenNotice();
-      if (notice) { mount(author, 'hidden', feedAnchor(notice)); return; }
+      if (isHidden(feed)) { mount(author, 'hidden', feed); return; }
       if (await checkPartial(author)) {
         if (userFromPath() !== author || view) return;
-        const anchor = feedAnchor(null);
-        if (anchor) mount(author, 'partial', anchor);
+        const f = profileFeed();
+        if (f) mount(author, 'partial', f);
       }
     } finally { checking = false; }
   }
@@ -974,7 +1176,9 @@
 
   if (typeof GM_registerMenuCommand === 'function') {
     GM_registerMenuCommand('Copy debug report', () => {
-      const text = ['url ' + location.href, 'view ' + (view ? view.reason : 'none'), ...debugLog].join('\n');
+      const text = ['url ' + location.href, 'view ' + (view ? view.reason : 'none'),
+        'shreddit-post defined ' + defined('shreddit-post'),
+        'action-row defined ' + defined('shreddit-comment-action-row'), ...debugLog].join('\n');
       if (typeof GM_setClipboard === 'function') GM_setClipboard(text); else console.log(text);
     });
   }
