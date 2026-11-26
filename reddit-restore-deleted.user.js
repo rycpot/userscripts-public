@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Reddit Restore Deleted Posts & Comments
 // @namespace    https://github.com/rycpot/userscripts-public
-// @version      9
+// @version      10
 // @description  On new Reddit (www.reddit.com), fills deleted or removed posts and comments back into their original spots using the Arctic Shift archive. Also restores comments that load later ("more replies", "continue thread").
 // @author       you
 // @icon         https://www.reddit.com/favicon.ico
@@ -963,7 +963,7 @@
           if (usable(box)) {
             comment.setAttribute('data-rdr-spot', name);
             if (hideOriginal) hideDeletedMessage(comment, bodyNode, box);
-            if (name === 'under-header') alignUnderHeader(comment, box);
+            if (name === 'under-header' || name === 'light-deleted') alignUnderHeader(comment, box);
             return;
           }
           if (i < spots.length) tryNext();
@@ -980,30 +980,64 @@
   // vote/reply row below it, with the same background (e.g. the yellow
   // highlight of a linked comment), so it reads as one continuous block.
   const aligned = new Set();
+  const isClear = (c) => !c || c === 'transparent' || /rgba\(\d+, \d+, \d+, 0\)/.test(c);
+
+  // Set a style once, remembering Reddit's own value so a re-align starts clean.
+  function setPx(node, prop, extra) {
+    const key = 'rdrOrig' + prop;
+    if (!(key in node.dataset)) node.dataset[key] = getComputedStyle(node)[prop];
+    node.style[prop] = (parseFloat(node.dataset[key]) + extra) + 'px';
+  }
+
   function alignUnderHeader(comment, box) {
     const name = own(comment, 'summary a.rdr-author, summary a[href*="/user/"], [slot="commentMeta"] a')[0];
-    const row = box.nextElementSibling;
     if (!name || !box.isConnected) return;
+    const details = directChild(comment, 'details');
+    const summary = details && directChild(details, 'summary');
+    // The vote/reply row that follows the text.
+    let row = box.nextElementSibling;
+    while (row && !row.matches('shreddit-comment') && !row.querySelector('button')) row = row.nextElementSibling;
+    if (row && row.matches('shreddit-comment')) row = null;
+
     box.style.marginLeft = box.style.marginRight = box.style.paddingLeft = '';
     const b = box.getBoundingClientRect();
     const n = name.getBoundingClientRect();
-    let left = b.left;
-    let right = b.right;
-    if (row && !row.matches('shreddit-comment')) {
-      const r = row.getBoundingClientRect();
-      if (r.width > 0 && r.left < n.left) {
-        left = r.left;
-        right = r.right;
-        const bg = getComputedStyle(row).backgroundColor;
-        if (bg && !/rgba\(0, 0, 0, 0\)|transparent/.test(bg)) box.style.backgroundColor = bg;
-      }
-    }
+    const s = summary && summary.getBoundingClientRect();
+    // One block from the avatar's left edge to the comment's right edge.
+    const left = s && s.width ? s.left : b.left;
+    const right = s && s.width ? s.right : b.right;
     box.style.marginTop = box.style.marginBottom = '0';
     box.style.paddingTop = box.style.paddingBottom = '4px';
     box.style.marginLeft = Math.round(left - b.left) + 'px';
     box.style.marginRight = Math.round(b.right - right) + 'px';
     box.style.paddingLeft = Math.max(0, Math.round(n.left - left)) + 'px';
     aligned.add(box);
+
+    // A linked comment (e.g. ?context=3) is highlighted. On a deleted comment
+    // Reddit paints the header and the button row as two separate, offset
+    // bands; normal comments get one rounded block. Rebuild that block.
+    const parts = [row, summary, ...(summary ? summary.querySelectorAll('[data-hl], .summary-hl') : [])].filter(Boolean);
+    const bg = parts.map((p) => getComputedStyle(p).backgroundColor).find((c) => !isClear(c));
+    if (!bg || !summary) { box.style.backgroundColor = ''; return; }
+    summary.querySelectorAll('[data-hl], .summary-hl').forEach((p) => {
+      if (!isClear(getComputedStyle(p).backgroundColor)) p.style.setProperty('background', 'transparent', 'important');
+    });
+    summary.style.backgroundColor = bg;
+    summary.style.borderRadius = '8px 8px 0 0';
+    box.style.backgroundColor = bg;
+    box.style.borderRadius = '0';
+    if (row) {
+      const r = row.getBoundingClientRect();
+      setPx(row, 'marginLeft', left - r.left);
+      setPx(row, 'paddingLeft', r.left - left);
+      setPx(row, 'marginRight', r.right - right);
+      setPx(row, 'paddingRight', right - r.right);
+      row.style.backgroundColor = bg;
+      row.style.borderRadius = '0 0 8px 8px';
+      box.style.borderRadius = '0';
+    } else {
+      box.style.borderRadius = '0 0 8px 8px';
+    }
   }
   // Re-align after the window (and so the comment column) is resized.
   let alignTimer = 0;
