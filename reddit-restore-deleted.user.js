@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Reddit Restore Deleted Posts & Comments
 // @namespace    https://github.com/rycpot/userscripts-public
-// @version      8
+// @version      9
 // @description  On new Reddit (www.reddit.com), fills deleted or removed posts and comments back into their original spots using the Arctic Shift archive. Also restores comments that load later ("more replies", "continue thread").
 // @author       you
 // @icon         https://www.reddit.com/favicon.ico
@@ -963,6 +963,7 @@
           if (usable(box)) {
             comment.setAttribute('data-rdr-spot', name);
             if (hideOriginal) hideDeletedMessage(comment, bodyNode, box);
+            if (name === 'under-header') alignUnderHeader(comment, box);
             return;
           }
           if (i < spots.length) tryNext();
@@ -972,6 +973,49 @@
     };
     tryNext();
   }
+
+  // Text placed straight under the header sits in the full-width column (it
+  // would start under the avatar). Line it up like a normal comment: the text
+  // starts where the username starts, and the box spans the same band as the
+  // vote/reply row below it, with the same background (e.g. the yellow
+  // highlight of a linked comment), so it reads as one continuous block.
+  const aligned = new Set();
+  function alignUnderHeader(comment, box) {
+    const name = own(comment, 'summary a.rdr-author, summary a[href*="/user/"], [slot="commentMeta"] a')[0];
+    const row = box.nextElementSibling;
+    if (!name || !box.isConnected) return;
+    box.style.marginLeft = box.style.marginRight = box.style.paddingLeft = '';
+    const b = box.getBoundingClientRect();
+    const n = name.getBoundingClientRect();
+    let left = b.left;
+    let right = b.right;
+    if (row && !row.matches('shreddit-comment')) {
+      const r = row.getBoundingClientRect();
+      if (r.width > 0 && r.left < n.left) {
+        left = r.left;
+        right = r.right;
+        const bg = getComputedStyle(row).backgroundColor;
+        if (bg && !/rgba\(0, 0, 0, 0\)|transparent/.test(bg)) box.style.backgroundColor = bg;
+      }
+    }
+    box.style.marginTop = box.style.marginBottom = '0';
+    box.style.paddingTop = box.style.paddingBottom = '4px';
+    box.style.marginLeft = Math.round(left - b.left) + 'px';
+    box.style.marginRight = Math.round(b.right - right) + 'px';
+    box.style.paddingLeft = Math.max(0, Math.round(n.left - left)) + 'px';
+    aligned.add(box);
+  }
+  // Re-align after the window (and so the comment column) is resized.
+  let alignTimer = 0;
+  window.addEventListener('resize', () => {
+    clearTimeout(alignTimer);
+    alignTimer = setTimeout(() => {
+      for (const box of [...aligned]) {
+        const c = box.isConnected && box.closest('shreddit-comment');
+        if (c) alignUnderHeader(c, box); else aligned.delete(box);
+      }
+    }, 150);
+  });
 
   function hideDeletedMessage(comment, bodyNode, box) {
     if (bodyNode && bodyNode.isConnected) {
