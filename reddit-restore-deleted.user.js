@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Reddit Restore Deleted Posts & Comments
 // @namespace    https://github.com/rycpot/userscripts-public
-// @version      10
+// @version      11
 // @description  On new Reddit (www.reddit.com), fills deleted or removed posts and comments back into their original spots using the Arctic Shift archive. Also restores comments that load later ("more replies", "continue thread").
 // @author       you
 // @icon         https://www.reddit.com/favicon.ico
@@ -585,6 +585,18 @@
     return null;
   }
 
+  // Load a picture before showing it, so the avatar swaps in one go instead of
+  // flashing empty while it downloads.
+  function preload(u) {
+    return new Promise((done) => {
+      const im = new Image();
+      im.referrerPolicy = 'no-referrer';
+      im.onload = () => done(u);
+      im.onerror = () => done(null);
+      im.src = u;
+    });
+  }
+
   function restoreAvatar(scope, name, owner) {
     if (!name) return;
     const node = [...scope.querySelectorAll('image, img')].find((n) =>
@@ -592,8 +604,8 @@
       && DEFAULT_AVATAR.test(n.getAttribute('href') || n.getAttribute('xlink:href') || n.getAttribute('src') || ''));
     if (!node) return;
     if (!avatarCache.has(name)) avatarCache.set(name, lookupAvatar(name));
-    avatarCache.get(name).then((u) => {
-      if (!u || !/^https:\/\//.test(u) || !node.isConnected) return;
+    avatarCache.get(name).then((u) => (u && /^https:\/\//.test(u) ? preload(u) : null)).then((u) => {
+      if (!u || !node.isConnected) return;
       if (node.tagName.toLowerCase() === 'img') {
         node.removeAttribute('srcset');
         node.src = u;
@@ -951,6 +963,16 @@
       return true;
     }]);
 
+    // Everything happens in one step (insert, hide Reddit's "removed" note,
+    // line up, highlight) while the box is invisible, then it is shown. The
+    // browser never paints a half-finished state, so nothing jumps.
+    box.style.visibility = 'hidden';
+    const finish = (name) => {
+      comment.setAttribute('data-rdr-spot', name);
+      if (hideOriginal) hideDeletedMessage(comment, bodyNode, box);
+      if (name === 'under-header' || name === 'light-deleted') alignUnderHeader(comment, box);
+      box.style.visibility = '';
+    };
     let i = 0;
     const tryNext = () => {
       while (i < spots.length && !box._rdrDead) {
@@ -958,15 +980,12 @@
         box.removeAttribute('slot');
         box.remove();
         if (!put()) continue;
+        if (usable(box)) { finish(name); return; } // reading its size lays the page out now
+        // Shadow slots can take a frame to render; check once more before moving on.
         afterLayout(() => {
           if (box._rdrDead) return;
-          if (usable(box)) {
-            comment.setAttribute('data-rdr-spot', name);
-            if (hideOriginal) hideDeletedMessage(comment, bodyNode, box);
-            if (name === 'under-header' || name === 'light-deleted') alignUnderHeader(comment, box);
-            return;
-          }
-          if (i < spots.length) tryNext();
+          if (usable(box)) { finish(name); return; }
+          if (i < spots.length) tryNext(); else box.style.visibility = '';
         });
         return;
       }
@@ -1165,12 +1184,14 @@
       box.setAttribute('slot', 'text-body');
       post.appendChild(box);
     }
-    afterLayout(() => {
+    const fallback = () => {
       if (box.isConnected && !isRendered(box)) {
         box.removeAttribute('slot');
         post.after(box);
       }
-    });
+    };
+    fallback(); // checked right away, so a wrong spot is never painted
+    afterLayout(fallback);
   }
 
   // ------------------------------------------------------------- scanning
