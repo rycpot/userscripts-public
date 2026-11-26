@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Reddit Restore Deleted Posts & Comments
 // @namespace    https://github.com/rycpot/userscripts-public
-// @version      12
+// @version      13
 // @description  On new Reddit (www.reddit.com), fills deleted or removed posts and comments back into their original spots using the Arctic Shift archive. Also restores comments that load later ("more replies", "continue thread").
 // @author       you
 // @icon         https://www.reddit.com/favicon.ico
@@ -1022,6 +1022,7 @@
     // Start from Reddit's own layout every time, so aligning again (after
     // Reddit shifts things around) gives the same result instead of drifting.
     box.style.marginLeft = box.style.marginRight = box.style.paddingLeft = '';
+    box.style.maxWidth = 'none'; // a 100% cap would stop it stretching under the avatar and leave the right edge short
     if (row) for (const prop of ROW_PROPS) if (('rdrOrig' + prop) in row.dataset) row.style[prop] = row.dataset['rdrOrig' + prop];
     const b = box.getBoundingClientRect();
     const n = name.getBoundingClientRect();
@@ -1056,7 +1057,9 @@
     const parts = [row, summary, ...(summary ? summary.querySelectorAll('[data-hl], .summary-hl') : [])].filter(Boolean);
     const bg = parts.map((p) => getComputedStyle(p).backgroundColor).find((c) => !isClear(c));
     if (!bg || !summary) { box.style.backgroundColor = ''; return; }
-    summary.querySelectorAll('[data-hl], .summary-hl').forEach((p) => {
+    // Reddit also paints small offset pieces (into the thread-line column)
+    // that stick out of the block; clear them along with the header's own.
+    own(comment, '[data-hl], .summary-hl, .comment-action-row-hl, .comment-body-hl').forEach((p) => {
       if (!isClear(getComputedStyle(p).backgroundColor)) p.style.setProperty('background', 'transparent', 'important');
     });
     summary.style.backgroundColor = bg;
