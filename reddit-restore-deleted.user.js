@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Reddit Restore Deleted Posts & Comments
 // @namespace    https://github.com/rycpot/userscripts-public
-// @version      7
+// @version      8
 // @description  On new Reddit (www.reddit.com), fills deleted or removed posts and comments back into their original spots using the Arctic Shift archive. Also restores comments that load later ("more replies", "continue thread").
 // @author       you
 // @icon         https://www.reddit.com/favicon.ico
@@ -906,10 +906,21 @@
       deletedWrapper(comment, n).after(box);
       return true;
     }]);
+    // Current Reddit: <details><summary>avatar + name + time</summary> text,
+    // buttons, replies</details>. With no text element at all (some removed
+    // comments), the text goes right under the header, before the buttons.
+    spots.push(['under-header', () => {
+      const details = directChild(comment, 'details');
+      const summary = details && directChild(details, 'summary');
+      if (!summary) return false;
+      summary.after(box);
+      return true;
+    }]);
     spots.push(['light-slot', () => {
-      box.setAttribute('slot', 'comment');
       const m = meta();
-      if (m) m.after(box); else comment.prepend(box);
+      if (!m) return false; // never put it above the header
+      box.setAttribute('slot', 'comment');
+      m.after(box);
       return true;
     }]);
     if (comment.shadowRoot) {
