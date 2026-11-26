@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Reddit Restore Deleted Posts & Comments
 // @namespace    https://github.com/rycpot/userscripts-public
-// @version      11
+// @version      12
 // @description  On new Reddit (www.reddit.com), fills deleted or removed posts and comments back into their original spots using the Arctic Shift archive. Also restores comments that load later ("more replies", "continue thread").
 // @author       you
 // @icon         https://www.reddit.com/favicon.ico
@@ -1002,6 +1002,7 @@
   const isClear = (c) => !c || c === 'transparent' || /rgba\(\d+, \d+, \d+, 0\)/.test(c);
 
   // Set a style once, remembering Reddit's own value so a re-align starts clean.
+  const ROW_PROPS = ['marginLeft', 'paddingLeft', 'marginRight', 'paddingRight'];
   function setPx(node, prop, extra) {
     const key = 'rdrOrig' + prop;
     if (!(key in node.dataset)) node.dataset[key] = getComputedStyle(node)[prop];
@@ -1018,7 +1019,10 @@
     while (row && !row.matches('shreddit-comment') && !row.querySelector('button')) row = row.nextElementSibling;
     if (row && row.matches('shreddit-comment')) row = null;
 
+    // Start from Reddit's own layout every time, so aligning again (after
+    // Reddit shifts things around) gives the same result instead of drifting.
     box.style.marginLeft = box.style.marginRight = box.style.paddingLeft = '';
+    if (row) for (const prop of ROW_PROPS) if (('rdrOrig' + prop) in row.dataset) row.style[prop] = row.dataset['rdrOrig' + prop];
     const b = box.getBoundingClientRect();
     const n = name.getBoundingClientRect();
     const s = summary && summary.getBoundingClientRect();
@@ -1030,7 +1034,21 @@
     box.style.marginLeft = Math.round(left - b.left) + 'px';
     box.style.marginRight = Math.round(b.right - right) + 'px';
     box.style.paddingLeft = Math.max(0, Math.round(n.left - left)) + 'px';
-    aligned.add(box);
+    if (!aligned.has(box)) {
+      aligned.add(box);
+      // Reddit keeps adjusting the comment after it loads (buttons, fonts,
+      // the sidebar). Re-align whenever the header or comment changes size;
+      // this runs before the browser paints, so nothing visibly moves.
+      if (window.ResizeObserver) {
+        const ro = new ResizeObserver(() => {
+          if (!box.isConnected) { ro.disconnect(); aligned.delete(box); return; }
+          alignUnderHeader(comment, box);
+        });
+        if (summary) ro.observe(summary);
+        ro.observe(comment);
+      }
+      afterLayout(() => { if (box.isConnected) alignUnderHeader(comment, box); });
+    }
 
     // A linked comment (e.g. ?context=3) is highlighted. On a deleted comment
     // Reddit paints the header and the button row as two separate, offset
